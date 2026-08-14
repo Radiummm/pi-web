@@ -2,6 +2,16 @@
 
 [中文文档](./README.zh-CN.md) | [日本語](./README.ja.md) | [Русский](./README.ru.md)
 
+> Community-enhanced fork maintained by [Radiummm](https://github.com/Radiummm), based on [agegr/pi-web](https://github.com/agegr/pi-web). This is not an official upstream release.
+
+## Enhanced Fork Features
+
+- **Approval profiles**: switch between always asking, risk-based approval, and full access from the top bar. This integration requires [`@gotgenes/pi-permission-system`](https://www.npmjs.com/package/@gotgenes/pi-permission-system).
+- **Integrated terminal**: open an interactive project shell directly in Pi Web, with PTY input, output, resizing, and restart support.
+
+> [!WARNING]
+> The integrated terminal runs with the same operating-system permissions as Pi Web and is not restricted by the agent approval profile. Keep Pi Web bound to loopback. Do not expose this fork directly to the public internet.
+
 Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi). Pi Web uses the same local configuration and session files as pi, so you can browse and resume conversations, run agent turns, configure models and resources, and inspect project files from a browser.
 
 ![Pi Web displaying a pi session with structured Markdown, tool calls, and project navigation](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)

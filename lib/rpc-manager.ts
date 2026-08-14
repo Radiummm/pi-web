@@ -1492,6 +1492,13 @@ export async function destroyRpcSessionsForCwd(cwd: string): Promise<number> {
   return sessions.length;
 }
 
+export async function reloadIdleRpcSessions(): Promise<{ reloaded: number; deferred: number }> {
+  const sessions = Array.from(getRegistry().values()).filter((session) => session.isAlive());
+  const idle = sessions.filter((session) => !session.isRunning());
+  await Promise.all(idle.map((session) => session.send({ type: "reload" })));
+  return { reloaded: idle.length, deferred: sessions.length - idle.length };
+}
+
 export function getRunningRpcSessionIds(): string[] {
   const ids = new Set<string>();
   for (const [sessionId, session] of getRegistry()) {

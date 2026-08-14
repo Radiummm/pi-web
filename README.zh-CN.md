@@ -2,6 +2,16 @@
 
 [English](./README.md) | [日本語](./README.ja.md) | [Русский](./README.ru.md)
 
+> 由 [Radiummm](https://github.com/Radiummm) 维护的社区增强版，基于 [agegr/pi-web](https://github.com/agegr/pi-web)，不是上游官方发行版。
+
+## 增强版功能
+
+- **批准模式**：在顶部栏切换“始终询问”“仅风险操作询问”和“完全访问权限”。此功能需要安装 [`@gotgenes/pi-permission-system`](https://www.npmjs.com/package/@gotgenes/pi-permission-system)。
+- **集成终端**：直接在 Pi Web 中打开项目 Shell，支持 PTY 输入输出、尺寸调整和重新启动。
+
+> [!WARNING]
+> 集成终端拥有与 Pi Web 进程相同的操作系统权限，并且不受智能体批准模式限制。请保持 Pi Web 仅监听本机回环地址，不要把这个增强版直接暴露到公网。
+
 [pi 编程智能体](https://github.com/earendil-works/pi)的本地浏览器界面。Pi Web 与 pi 共用本机配置和会话文件，可在浏览器中查找和继续对话、运行智能体、配置模型与资源，并查看项目文件。
 
 中文微信群：请查看 [GitHub Discussions 帖子](https://github.com/agegr/pi-web/discussions/271)。
