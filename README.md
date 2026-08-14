@@ -4,10 +4,22 @@
 
 > Community-enhanced fork maintained by [Radiummm](https://github.com/Radiummm), based on [agegr/pi-web](https://github.com/agegr/pi-web). This is not an official upstream release.
 
-## Enhanced Fork Features
+## Changes from Upstream
 
-- **Approval profiles**: switch between always asking, risk-based approval, and full access from the top bar. This integration requires [`@gotgenes/pi-permission-system`](https://www.npmjs.com/package/@gotgenes/pi-permission-system).
-- **Integrated terminal**: open an interactive project shell directly in Pi Web, with PTY input, output, resizing, and restart support.
+This fork keeps the upstream session format, model configuration, file browser, and chat workflow unchanged. It adds:
+
+| Area | Original Pi Web | This fork |
+| --- | --- | --- |
+| Approval profiles | Renders approval dialogs requested by extensions, but has no global profile selector | Adds a top-bar selector for **Always ask**, **Risk operations only**, and **Full access** |
+| Permission configuration | Managed outside Pi Web | Atomically updates [`@gotgenes/pi-permission-system`](https://www.npmjs.com/package/@gotgenes/pi-permission-system) and reloads idle Pi sessions |
+| Integrated terminal | No interactive project shell | Adds an xterm.js + node-pty terminal with live input/output, resizing, restart, and exit handling |
+| Localization | Upstream interface translations | Adds English and Simplified Chinese text for the new permission and terminal controls |
+
+The approval profiles behave as follows:
+
+- **Always ask**: asks before external-directory access, web access, or Shell commands.
+- **Risk operations only**: asks for external or sensitive paths and risky commands such as deletion, elevation, package publishing, and destructive Git operations.
+- **Full access**: allows Pi tools, internet access, and filesystem operations without approval prompts.
 
 > [!WARNING]
 > The integrated terminal runs with the same operating-system permissions as Pi Web and is not restricted by the agent approval profile. Keep Pi Web bound to loopback. Do not expose this fork directly to the public internet.

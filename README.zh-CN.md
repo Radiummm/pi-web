@@ -4,10 +4,22 @@
 
 > 由 [Radiummm](https://github.com/Radiummm) 维护的社区增强版，基于 [agegr/pi-web](https://github.com/agegr/pi-web)，不是上游官方发行版。
 
-## 增强版功能
+## 相比原版的改动
 
-- **批准模式**：在顶部栏切换“始终询问”“仅风险操作询问”和“完全访问权限”。此功能需要安装 [`@gotgenes/pi-permission-system`](https://www.npmjs.com/package/@gotgenes/pi-permission-system)。
-- **集成终端**：直接在 Pi Web 中打开项目 Shell，支持 PTY 输入输出、尺寸调整和重新启动。
+本增强版保留原版的会话格式、模型配置、文件浏览器和对话流程，新增以下功能：
+
+| 功能 | 原版 Pi Web | 本增强版 |
+| --- | --- | --- |
+| 批准模式 | 能显示扩展发起的批准对话框，但没有全局模式选择器 | 顶部栏新增“始终询问”“仅风险操作询问”和“完全访问权限”三档切换 |
+| 权限配置 | 需要在 Pi Web 外部管理 | 自动、安全地写入 [`@gotgenes/pi-permission-system`](https://www.npmjs.com/package/@gotgenes/pi-permission-system) 配置，并重载空闲 Pi 会话 |
+| 集成终端 | 没有交互式项目 Shell | 新增基于 xterm.js 和 node-pty 的终端，支持实时输入输出、尺寸调整、重新启动和退出处理 |
+| 多语言 | 原版界面翻译 | 为新增的权限控制和终端补充英文、简体中文文案 |
+
+三档批准模式的具体行为：
+
+- **始终询问**：访问工作区外目录、使用互联网或运行 Shell 命令前询问。
+- **仅风险操作询问**：外部或敏感路径，以及删除、提权、发布包、破坏性 Git 操作等风险命令需要批准。
+- **完全访问权限**：Pi 工具、互联网和文件系统操作不再弹出批准请求。
 
 > [!WARNING]
 > 集成终端拥有与 Pi Web 进程相同的操作系统权限，并且不受智能体批准模式限制。请保持 Pi Web 仅监听本机回环地址，不要把这个增强版直接暴露到公网。
