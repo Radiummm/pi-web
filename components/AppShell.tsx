@@ -100,6 +100,7 @@ export function AppShell() {
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
   const [pluginsConfigOpen, setPluginsConfigOpen] = useState(false);
   const [mainView, setMainView] = useState<"chat" | "terminal">("chat");
+  const [terminalMounted, setTerminalMounted] = useState(false);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
   const [projectTrustBusy, setProjectTrustBusy] = useState(false);
@@ -175,9 +176,21 @@ export function AppShell() {
     reclampRightPanelWidth();
   }, [reclampRightPanelWidth, reclampSidebarWidth, rightPanelOpen]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
+  const planModeToggleRef = useRef<(() => Promise<void>) | null>(null);
+  const [planModeActive, setPlanModeActive] = useState(false);
+  const [planModeAvailable, setPlanModeAvailable] = useState(false);
   const topBarRef = useRef<HTMLDivElement>(null);
   const mobileToolbarRef = useRef<HTMLDivElement>(null);
   const languageBtnRef = useRef<HTMLButtonElement>(null);
+
+  const handlePlanModeToggleChange = useCallback((toggle: (() => Promise<void>) | null) => {
+    planModeToggleRef.current = toggle;
+    setPlanModeAvailable(Boolean(toggle));
+  }, []);
+
+  const togglePlanMode = useCallback(async () => {
+    await planModeToggleRef.current?.();
+  }, []);
 
   // Branch navigator state — populated by ChatWindow via onBranchDataChange
   const [branchTree, setBranchTree] = useState<SessionTreeNode[]>([]);
@@ -1128,10 +1141,16 @@ export function AppShell() {
     if (!mobile && !showChat) return null;
     return (
       <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-        <PermissionControl compact={mobile} />
+        <PermissionControl
+          compact={mobile}
+          planModeActive={planModeActive}
+          planModeAvailable={planModeAvailable}
+          onTogglePlanMode={togglePlanMode}
+        />
         <button
           type="button"
           onClick={() => {
+            setTerminalMounted(true);
             setMainView((view) => view === "terminal" ? "chat" : "terminal");
             setActiveTopPanel(null);
             if (mobile) setMobileToolbarMoreOpen(true);
@@ -2119,6 +2138,8 @@ export function AppShell() {
               onBranchDataChange={handleBranchDataChange}
               onSystemPromptChange={handleSystemPromptChange}
               onSystemPromptLoaderChange={handleSystemPromptLoaderChange}
+              onPlanModeChange={setPlanModeActive}
+              onPlanModeToggleChange={handlePlanModeToggleChange}
               onSessionStatsChange={handleSessionStatsChange}
               onSessionStatsPanelOpen={openSessionStatsPanel}
               onContextUsageChange={handleContextUsageChange}
@@ -2170,7 +2191,14 @@ export function AppShell() {
             )
           ) : null}
           </div>
-          {mainView === "terminal" && projectTrustCwd && <TerminalPanel cwd={projectTrustCwd} />}
+          {terminalMounted && projectTrustCwd && (
+            <div
+              aria-hidden={mainView !== "terminal"}
+              style={{ width: "100%", height: "100%", display: mainView === "terminal" ? "block" : "none" }}
+            >
+              <TerminalPanel cwd={projectTrustCwd} />
+            </div>
+          )}
         </div>
       </div>
 

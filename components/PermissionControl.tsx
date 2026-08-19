@@ -6,13 +6,21 @@ import type { PermissionMode } from "@/lib/permission-modes";
 
 const MODES: PermissionMode[] = ["workspace", "risk", "full"];
 
-export function PermissionControl({ compact = false }: { compact?: boolean }) {
+interface Props {
+  compact?: boolean;
+  planModeActive?: boolean;
+  planModeAvailable?: boolean;
+  onTogglePlanMode?: () => Promise<void>;
+}
+
+export function PermissionControl({ compact = false, planModeActive = false, planModeAvailable = false, onTogglePlanMode }: Props) {
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<PermissionMode>("workspace");
   const [installed, setInstalled] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [planSaving, setPlanSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -57,6 +65,16 @@ export function PermissionControl({ compact = false }: { compact?: boolean }) {
   };
 
   const modeColor = mode === "full" ? "#dc2626" : mode === "risk" ? "#d97706" : "var(--accent)";
+
+  const togglePlanMode = async () => {
+    if (!onTogglePlanMode || planSaving) return;
+    setPlanSaving(true);
+    try {
+      await onTogglePlanMode();
+    } finally {
+      setPlanSaving(false);
+    }
+  };
 
   return (
     <div ref={rootRef} style={{ position: "relative", height: "100%", flexShrink: 0 }}>
@@ -126,6 +144,37 @@ export function PermissionControl({ compact = false }: { compact?: boolean }) {
               </button>
             );
           })}
+          <div style={{ margin: "7px 8px", borderTop: "1px solid var(--border)" }} />
+          <div style={{ padding: "3px 8px 7px", color: "var(--text-muted)", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            {t("permissions.workMode")}
+          </div>
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={planModeActive}
+            disabled={!planModeAvailable || planSaving}
+            onClick={() => void togglePlanMode()}
+            style={{
+              display: "grid", gridTemplateColumns: "18px minmax(0, 1fr)", gap: 9,
+              width: "100%", padding: "10px 9px", border: "none", borderRadius: 7,
+              background: planModeActive ? "var(--bg-selected)" : "transparent", color: "var(--text)",
+              cursor: !planModeAvailable || planSaving ? "not-allowed" : "pointer", textAlign: "left",
+              opacity: !planModeAvailable ? 0.55 : 1,
+            }}
+          >
+            <span aria-hidden="true" style={{
+              display: "grid", placeItems: "center", width: 16, height: 16, marginTop: 1,
+              border: `1px solid ${planModeActive ? "var(--accent)" : "var(--border)"}`, borderRadius: "50%",
+            }}>
+              {planModeActive && <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent)" }} />}
+            </span>
+            <span>
+              <span style={{ display: "block", fontSize: 12, fontWeight: 650 }}>{t("chat.planMode")}</span>
+              <span style={{ display: "block", marginTop: 3, color: "var(--text-muted)", fontSize: 11, lineHeight: 1.45 }}>
+                {t("permissions.planModeDescription")}
+              </span>
+            </span>
+          </button>
           {!installed && <div style={{ padding: 8, color: "#dc2626", fontSize: 11 }}>{t("permissions.notInstalled")}</div>}
           {error && <div role="alert" style={{ padding: 8, color: "#dc2626", fontSize: 11, overflowWrap: "anywhere" }}>{error}</div>}
           {saving && <div style={{ padding: 8, color: "var(--text-muted)", fontSize: 11 }}>{t("permissions.saving")}</div>}
