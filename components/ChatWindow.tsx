@@ -46,6 +46,8 @@ interface Props {
   onSessionStatsPanelOpen?: () => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
   onOpenFile?: (filePath: string) => void;
+  onAskInNewChat?: (prompt: string, sourceSessionId?: string, sourceEntryId?: string) => void;
+  initialPrompt?: string;
   /** Completion sound state + controls, owned by AppShell so tasks finishing in
    *  a non-active workspace can still ring. */
   soundEnabled?: boolean;
@@ -249,7 +251,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
   );
 }
 
-export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onPlanModeChange, onPlanModeToggleChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onPlanModeChange, onPlanModeToggleChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onAskInNewChat, initialPrompt, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
 
@@ -297,7 +299,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   });
   const sessionBusy = agentRunning || bashRunning;
   const planModeActive = extensionStatuses.some((status) => status.key === "plan-mode");
-  const [quotedSelection, setQuotedSelection] = useState<{ text: string; top: number; left: number } | null>(null);
+  const [quotedSelection, setQuotedSelection] = useState<{ text: string; top: number; left: number; sourceEntryId?: string } | null>(null);
 
   const captureQuotedSelection = useCallback(() => {
     const selection = window.getSelection();
@@ -310,10 +312,15 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     const text = selection.toString().trim();
     if (!text) return setQuotedSelection(null);
     const rect = range.getBoundingClientRect();
+    const selectionElement = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+      ? range.commonAncestorContainer as Element
+      : range.commonAncestorContainer.parentElement;
+    const sourceEntryId = selectionElement?.closest<HTMLElement>("[data-message-role=\"assistant\"]")?.dataset.entryId;
     setQuotedSelection({
       text,
       top: Math.min(window.innerHeight - 44, rect.bottom + 8),
       left: Math.max(64, Math.min(window.innerWidth - 64, rect.left + rect.width / 2)),
+      sourceEntryId,
     });
   }, []);
 
@@ -327,6 +334,24 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     window.getSelection()?.removeAllRanges();
     setQuotedSelection(null);
   }, [chatInputRef, quotedSelection, t]);
+
+  const askSelectionInNewChat = useCallback(() => {
+    if (!quotedSelection || !onAskInNewChat) return;
+    onAskInNewChat(buildQuotedSelection(
+      quotedSelection.text,
+      t("chat.quoteIntro"),
+      t("chat.quoteQuestion"),
+    ), sessionIdRef.current ?? session?.id, quotedSelection.sourceEntryId);
+    window.getSelection()?.removeAllRanges();
+    setQuotedSelection(null);
+  }, [onAskInNewChat, quotedSelection, session?.id, sessionIdRef, t]);
+
+  const initialPromptSentRef = useRef(false);
+  useEffect(() => {
+    if (!initialPrompt || initialPromptSentRef.current || !chatInputRef?.current) return;
+    initialPromptSentRef.current = true;
+    chatInputRef.current.insertText(initialPrompt);
+  }, [chatInputRef, initialPrompt]);
 
   useEffect(() => {
     onPlanModeChange?.(planModeActive);
@@ -972,29 +997,65 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       </div>
 
       {quotedSelection && (
-        <button
-          type="button"
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={quoteSelection}
+        <div
+          role="menu"
+          aria-label={t("chat.askSelection")}
           style={{
             position: "fixed",
             top: quotedSelection.top,
             left: quotedSelection.left,
             zIndex: 80,
             transform: "translateX(-50%)",
-            padding: "7px 11px",
+            display: "flex",
+            gap: 4,
+            padding: 4,
             border: "1px solid color-mix(in srgb, var(--accent) 55%, var(--border))",
             borderRadius: 8,
             background: "var(--bg)",
-            color: "var(--text)",
             boxShadow: "0 8px 24px rgba(0,0,0,0.16)",
-            cursor: "pointer",
-            fontSize: 12,
-            fontWeight: 650,
           }}
         >
-          {t("chat.askPi")}
-        </button>
+          <button
+            type="button"
+            role="menuitem"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={quoteSelection}
+            style={{
+              padding: "6px 9px",
+              border: "none",
+              borderRadius: 6,
+              background: "transparent",
+              color: "var(--text)",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 650,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {t("chat.askInCurrent")}
+          </button>
+          {onAskInNewChat && quotedSelection.sourceEntryId && (
+            <button
+              type="button"
+              role="menuitem"
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={askSelectionInNewChat}
+              style={{
+                padding: "6px 9px",
+                border: "none",
+                borderRadius: 6,
+                background: "var(--bg-panel)",
+                color: "var(--accent)",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 650,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {t("chat.askInNewChat")}
+            </button>
+          )}
+        </div>
       )}
 
       <div className="relative">

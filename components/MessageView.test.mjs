@@ -85,6 +85,19 @@ test("renders partial assistant content before the provider error", () => {
   assert.match(html, /Error: Connection closed/);
 });
 
+test("renders a copy button for completed assistant text", () => {
+  const html = renderMessage({
+    role: "assistant",
+    provider: "openai",
+    model: "gpt-test",
+    content: [{ type: "text", text: "Copy this response" }],
+  });
+
+  assert.match(html, /Copy this response/);
+  assert.match(html, /title="Copy message"/);
+  assert.match(html, />Copy<\/button>/);
+});
+
 test("renders a complete SDK skill expansion as a compact command", () => {
   const html = renderMessage({
     role: "user",
