@@ -364,10 +364,12 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
   const initialPromptSentRef = useRef(false);
   useEffect(() => {
-    if (!initialPrompt || initialPromptSentRef.current || !chatInputRef?.current) return;
+    // The input is not mounted while a session is loading. Retry after loading
+    // finishes so quoted branch prompts are present in the actual composer.
+    if (loading || !initialPrompt || initialPromptSentRef.current || !chatInputRef?.current) return;
     initialPromptSentRef.current = true;
-    chatInputRef.current.insertText(initialPrompt);
-  }, [chatInputRef, initialPrompt]);
+    chatInputRef.current.insertIfEmpty(initialPrompt);
+  }, [chatInputRef, initialPrompt, loading]);
 
   useEffect(() => {
     onPlanModeChange?.(planModeActive);
