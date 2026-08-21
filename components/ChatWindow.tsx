@@ -299,7 +299,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   });
   const sessionBusy = agentRunning || bashRunning;
   const planModeActive = extensionStatuses.some((status) => status.key === "plan-mode");
-  const [quotedSelection, setQuotedSelection] = useState<{ text: string; top: number; left: number; sourceEntryId?: string } | null>(null);
+  const [quotedSelection, setQuotedSelection] = useState<{
+    text: string;
+    top: number;
+    left: number;
+    isAssistant: boolean;
+    sourceEntryId?: string;
+  } | null>(null);
 
   const captureQuotedSelection = useCallback(() => {
     const selection = window.getSelection();
@@ -315,11 +321,21 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     const selectionElement = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
       ? range.commonAncestorContainer as Element
       : range.commonAncestorContainer.parentElement;
-    const sourceEntryId = selectionElement?.closest<HTMLElement>("[data-message-role=\"assistant\"]")?.dataset.entryId;
+    const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer as Element
+      : range.startContainer.parentElement;
+    const endElement = range.endContainer.nodeType === Node.ELEMENT_NODE
+      ? range.endContainer as Element
+      : range.endContainer.parentElement;
+    const assistantElement = [selectionElement, startElement, endElement]
+      .map((element) => element?.closest<HTMLElement>("[data-message-role=\"assistant\"]"))
+      .find((element): element is HTMLElement => Boolean(element));
+    const sourceEntryId = assistantElement?.dataset.entryId;
     setQuotedSelection({
       text,
       top: Math.min(window.innerHeight - 44, rect.bottom + 8),
       left: Math.max(64, Math.min(window.innerWidth - 64, rect.left + rect.width / 2)),
+      isAssistant: Boolean(assistantElement),
       sourceEntryId,
     });
   }, []);
@@ -1034,7 +1050,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
           >
             {t("chat.askInCurrent")}
           </button>
-          {onAskInNewChat && quotedSelection.sourceEntryId && (
+          {onAskInNewChat && quotedSelection.isAssistant && (
             <button
               type="button"
               role="menuitem"
