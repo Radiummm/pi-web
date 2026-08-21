@@ -237,6 +237,7 @@ export const enLocale: LocalePlugin = {
     "chat.askInCurrent": "Ask here",
     "chat.askInNewChat": "Ask in new chat",
     "chat.newQuoteChat": "New chat about selected text",
+    "chat.quotedFromCurrent": "Quoted from current chat",
     "chat.quoteIntro": "About this passage:",
     "chat.quoteQuestion": "My question:",
     "chat.attachImage": "Attach image",

@@ -46,7 +46,7 @@ interface Props {
   onSessionStatsPanelOpen?: () => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
   onOpenFile?: (filePath: string) => void;
-  onAskInNewChat?: (prompt: string, sourceSessionId?: string, sourceEntryId?: string) => void;
+  onAskInNewChat?: (prompt: string, selectedText: string, sourceSessionId?: string, sourceEntryId?: string) => void;
   initialPrompt?: string;
   /** Completion sound state + controls, owned by AppShell so tasks finishing in
    *  a non-active workspace can still ring. */
@@ -341,7 +341,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       quotedSelection.text,
       t("chat.quoteIntro"),
       t("chat.quoteQuestion"),
-    ), sessionIdRef.current ?? session?.id, quotedSelection.sourceEntryId);
+    ), quotedSelection.text, sessionIdRef.current ?? session?.id, quotedSelection.sourceEntryId);
     window.getSelection()?.removeAllRanges();
     setQuotedSelection(null);
   }, [onAskInNewChat, quotedSelection, session?.id, sessionIdRef, t]);

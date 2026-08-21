@@ -50,7 +50,7 @@ import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 
 type SessionCopyField = "file" | "id";
-type QuoteChatState = { id: string; cwd: string; prompt: string; sessionId?: string };
+type QuoteChatState = { id: string; cwd: string; prompt: string; quoteText: string; sessionId?: string };
 type AutoNameStatus =
   | { kind: "idle" }
   | { kind: "naming" }
@@ -771,7 +771,7 @@ export function AppShell() {
     router.replace(`?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
   }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
 
-  const handleAskInNewChat = useCallback(async (prompt: string, sourceSessionId?: string, sourceEntryId?: string) => {
+  const handleAskInNewChat = useCallback(async (prompt: string, quoteText: string, sourceSessionId?: string, sourceEntryId?: string) => {
     const cwd = selectedSession?.cwd ?? newSessionCwd ?? activeCwd;
     if (!cwd) return;
     const id = typeof crypto.randomUUID === "function"
@@ -794,7 +794,7 @@ export function AppShell() {
       x: Math.max(8, window.innerWidth - (isMobile ? Math.min(window.innerWidth - 16, 420) : 540)),
       y: Math.max(48, window.innerHeight - (isMobile ? Math.min(window.innerHeight - 72, 620) : 700)),
     });
-    setQuoteChat({ id, cwd, prompt, sessionId: branchSessionId });
+    setQuoteChat({ id, cwd, prompt, quoteText, sessionId: branchSessionId });
   }, [activeCwd, isMobile, newSessionCwd, selectedSession?.cwd]);
 
   const handleQuoteChatPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -2319,6 +2319,10 @@ export function AppShell() {
                   <path d="M6 6 18 18M18 6 6 18" />
                 </svg>
               </button>
+            </div>
+            <div style={{ padding: "9px 12px", borderBottom: "1px solid color-mix(in srgb, var(--border) 62%, transparent)", background: "color-mix(in srgb, var(--accent) 6%, transparent)", color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5 }}>
+              <div style={{ marginBottom: 4, color: "var(--accent)", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>{translate("chat.quotedFromCurrent")}</div>
+              <div style={{ maxHeight: 88, overflowY: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere", borderLeft: "2px solid color-mix(in srgb, var(--accent) 55%, transparent)", paddingLeft: 8 }}>{quoteChat.quoteText}</div>
             </div>
             <div style={{ flex: 1, minHeight: 0 }}>
               <ChatWindow

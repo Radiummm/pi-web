@@ -237,6 +237,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.askInCurrent": "在当前对话询问",
     "chat.askInNewChat": "在新对话询问",
     "chat.newQuoteChat": "关于选中文字的新对话",
+    "chat.quotedFromCurrent": "引用自当前对话",
     "chat.quoteIntro": "关于这段内容：",
     "chat.quoteQuestion": "我的问题是：",
     "chat.attachImage": "附加图片",
