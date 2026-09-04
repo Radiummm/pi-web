@@ -79,6 +79,17 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       // eslint-disable-next-line @next/next/no-img-element
       return <img src={imageSrc} alt={alt ?? ""} loading="lazy" {...props} />;
     },
+    input({ checked, value, ...props }) {
+      delete props.node;
+      return (
+        <input
+          {...props}
+          checked={checked ?? false}
+          value={value ?? ""}
+          readOnly
+        />
+      );
+    },
     table({ children }) {
       return (
         <div className="markdown-table-wrap">

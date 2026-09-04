@@ -3,7 +3,21 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
+import {
+  deleteConversationFolder,
+  emptyConversationFolderState,
+  loadConversationFolderState,
+  resolveConversationFolderAssignments,
+  saveConversationFolderState,
+  type ConversationFolder,
+  type ConversationFolderState,
+} from "@/lib/conversation-folder-state";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
+import {
+  clampHistoryRatio,
+  loadHistoryRatio,
+  saveHistoryRatio,
+} from "@/lib/sidebar-layout-state";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { useI18n } from "@/hooks/useI18n";
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -79,6 +93,7 @@ function ToolbarIconButton({
 interface Props {
   selectedSessionId: string | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean) => void;
+  onPopOutSession?: (session: SessionInfo, clientX: number, clientY: number) => void;
   onNewSession?: (sessionId: string, cwd: string) => void;
   initialSessionId?: string | null;
   skipInitialProjectSelection?: boolean;
@@ -304,6 +319,18 @@ function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
   return roots;
 }
 
+function flattenSessionTree(nodes: SessionTreeNode[]): SessionInfo[] {
+  const sessions: SessionInfo[] = [];
+  const pending = [...nodes];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (!node) continue;
+    sessions.push(node.session);
+    pending.push(...node.children);
+  }
+  return sessions;
+}
+
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
 
 function useScramble(target: string, running: boolean): string {
@@ -392,7 +419,7 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onPopOutSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -419,6 +446,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const wtDropdownRef = useRef<HTMLDivElement>(null);
   const wtNewInputRef = useRef<HTMLInputElement>(null);
   const [explorerOpen, setExplorerOpen] = useState(true);
+  const [historyRatio, setHistoryRatio] = useState(0.5);
+  const [folderState, setFolderState] = useState<ConversationFolderState>(() => emptyConversationFolderState());
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null);
   const [explorerKey, setExplorerKey] = useState(0);
   const [explorerUploadBusy, setExplorerUploadBusy] = useState(false);
   const [changesCount, setChangesCount] = useState(0);
@@ -434,6 +466,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
+  const splitPaneRef = useRef<HTMLDivElement>(null);
+  const newFolderInputRef = useRef<HTMLInputElement>(null);
 
   const loadSessions = useCallback(async (showLoading = false, force = false) => {
     try {
@@ -480,6 +514,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // preference after hydration so a collapsed explorer stays collapsed on reload.
   useEffect(() => {
     setExplorerOpen(loadExplorerOpen());
+    setHistoryRatio(loadHistoryRatio());
+    setFolderState(loadConversationFolderState());
   }, []);
 
   // Persist unread markers so they survive a browser refresh before the user
@@ -866,6 +902,91 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // Sessions of every worktree in the selected project are shown together
   const selectedProject = projectRootFor(selectedCwd);
 
+  const updateFolderState = useCallback((update: (current: ConversationFolderState) => ConversationFolderState) => {
+    setFolderState((current) => {
+      const next = update(current);
+      saveConversationFolderState(next);
+      return next;
+    });
+  }, []);
+
+  const commitNewFolder = useCallback(() => {
+    const name = newFolderName.trim();
+    if (!name || !selectedProject) return;
+    const id = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    updateFolderState((current) => ({
+      ...current,
+      folders: [...current.folders, { id, name, projectRoot: selectedProject, collapsed: false }],
+    }));
+    setNewFolderName("");
+    setCreatingFolder(false);
+  }, [newFolderName, selectedProject, updateFolderState]);
+
+  const moveSessionToFolder = useCallback((sessionId: string, folderId: string | null) => {
+    updateFolderState((current) => ({
+      ...current,
+      assignments: { ...current.assignments, [sessionId]: folderId },
+    }));
+  }, [updateFolderState]);
+
+  const renameFolder = useCallback((folderId: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    updateFolderState((current) => ({
+      ...current,
+      folders: current.folders.map((folder) => folder.id === folderId ? { ...folder, name: trimmed } : folder),
+    }));
+  }, [updateFolderState]);
+
+  const toggleFolder = useCallback((folderId: string) => {
+    updateFolderState((current) => ({
+      ...current,
+      folders: current.folders.map((folder) => folder.id === folderId ? { ...folder, collapsed: !folder.collapsed } : folder),
+    }));
+  }, [updateFolderState]);
+
+  const removeFolder = useCallback((folderId: string) => {
+    updateFolderState((current) => deleteConversationFolder(current, folderId));
+  }, [updateFolderState]);
+
+  const beginSplitResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const pane = splitPaneRef.current;
+    if (!pane) return;
+    event.preventDefault();
+    const rect = pane.getBoundingClientRect();
+    let latestRatio = historyRatio;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (moveEvent: PointerEvent) => {
+      latestRatio = clampHistoryRatio((moveEvent.clientY - rect.top) / rect.height);
+      setHistoryRatio(latestRatio);
+    };
+    const onEnd = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onEnd);
+      window.removeEventListener("pointercancel", onEnd);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      saveHistoryRatio(latestRatio);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onEnd, { once: true });
+    window.addEventListener("pointercancel", onEnd, { once: true });
+  }, [historyRatio]);
+
+  const adjustHistoryRatio = useCallback((delta: number) => {
+    setHistoryRatio((current) => {
+      const next = clampHistoryRatio(current + delta);
+      saveHistoryRatio(next);
+      return next;
+    });
+  }, []);
+
   // Per-project activity counts (running / unread) for the workspace selector.
   // Keyed the same way as getRecentProjects (projectRoot ?? cwd) so the counts
   // line up with each dropdown item. Small data set — cheap to recompute.
@@ -895,6 +1016,20 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const filteredSessions = selectedProject
     ? allSessions.filter((s) => (s.projectRoot ?? s.cwd) === selectedProject)
     : allSessions;
+  const projectFolders = selectedProject
+    ? folderState.folders.filter((folder) => folder.projectRoot === selectedProject)
+    : [];
+  const validFolderIds = new Set(projectFolders.map((folder) => folder.id));
+  const resolvedFolderAssignments = resolveConversationFolderAssignments(
+    filteredSessions,
+    folderState.assignments,
+    validFolderIds,
+  );
+  const unfiledSessions = filteredSessions.filter((session) => !resolvedFolderAssignments.get(session.id));
+  const folderTrees = new Map(projectFolders.map((folder) => [
+    folder.id,
+    buildSessionTree(filteredSessions.filter((session) => resolvedFolderAssignments.get(session.id) === folder.id)),
+  ]));
   const showWorktreeSwitcher = Boolean(
     worktreeState?.isGit
     && worktreeState.isTopLevel
@@ -924,8 +1059,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         }
       : null);
 
-  // Build parent-child tree within the filtered set
-  const sessionTree = buildSessionTree(filteredSessions);
+  // Build parent-child tree for conversations that are not in a custom folder.
+  const sessionTree = buildSessionTree(unfiledSessions);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -988,6 +1123,27 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 <line x1="1" y1="6" x2="11" y2="6" />
               </svg>
               {t("sidebar.new")}
+            </button>
+            <button
+              onClick={() => {
+                setCreatingFolder(true);
+                setTimeout(() => newFolderInputRef.current?.focus(), 0);
+              }}
+              disabled={!selectedProject}
+              title={t("sidebar.newFolder")}
+              aria-label={t("sidebar.newFolder")}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: "var(--bg-hover)", border: "1px solid var(--border)",
+                color: selectedProject ? "var(--text-muted)" : "var(--text-dim)",
+                cursor: selectedProject ? "pointer" : "not-allowed",
+                width: 32, height: 32, borderRadius: 7, padding: 0, flexShrink: 0,
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+                <path d="M12 11v6M9 14h6" />
+              </svg>
             </button>
             <button
               onClick={() => loadSessions(false, true)}
@@ -1590,8 +1746,53 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         )}
       </div>
 
+      <div ref={splitPaneRef} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
       {/* Session list */}
-      <div style={{ flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
+      <div
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes("text/session-id")) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+        }}
+        onDrop={(event) => {
+          const sessionId = event.dataTransfer.getData("text/session-id");
+          if (sessionId && event.currentTarget === event.target) moveSessionToFolder(sessionId, null);
+        }}
+        style={{
+          flex: explorerOpen && (selectedCwdProp || selectedCwd) ? `0 0 ${historyRatio * 100}%` : "1 1 auto",
+          overflowY: "auto",
+          padding: "0",
+          minHeight: 80,
+        }}
+      >
+        {draggingSessionId && projectFolders.length > 0 && (
+          <ConversationFolderDropTray
+            folders={projectFolders}
+            onDrop={(folderId) => {
+              moveSessionToFolder(draggingSessionId, folderId);
+              setDraggingSessionId(null);
+            }}
+          />
+        )}
+        {creatingFolder && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid var(--border)" }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+            </svg>
+            <input
+              ref={newFolderInputRef}
+              value={newFolderName}
+              onChange={(event) => setNewFolderName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commitNewFolder();
+                if (event.key === "Escape") { setCreatingFolder(false); setNewFolderName(""); }
+              }}
+              onBlur={() => { if (newFolderName.trim()) commitNewFolder(); else setCreatingFolder(false); }}
+              placeholder={t("sidebar.folderName")}
+              style={{ flex: 1, minWidth: 0, height: 28, padding: "4px 7px", border: "1px solid var(--accent)", borderRadius: 5, outline: "none", background: "var(--bg)", color: "var(--text)", fontSize: 12 }}
+            />
+          </div>
+        )}
         {loading && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             {t("sidebar.loading")}
@@ -1607,6 +1808,36 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             {t("sidebar.noSessions")}
           </div>
         )}
+        {projectFolders.map((folder) => (
+          <ConversationFolderSection
+            key={folder.id}
+            folder={folder}
+            nodes={folderTrees.get(folder.id) ?? []}
+            selectedSessionId={selectedSessionId}
+            runningSessionIds={runningSessionIds}
+            unreadSessionIds={unreadSessionIds}
+            onSelectSession={handleSelectSessionFromList}
+            onPopOutSession={onPopOutSession}
+            onRenamed={loadSessions}
+            onSessionDeleted={(id) => {
+              onSessionDeleted?.(id);
+              loadSessions();
+            }}
+            onMoveSession={moveSessionToFolder}
+            onSessionDragStart={setDraggingSessionId}
+            onSessionDragEnd={() => setDraggingSessionId(null)}
+            onRenameFolder={renameFolder}
+            onToggleFolder={toggleFolder}
+            onDeleteFolder={removeFolder}
+          />
+        ))}
+        {projectFolders.length > 0 && (
+          <ConversationFolderHeader
+            name={t("sidebar.unfiled")}
+            count={unfiledSessions.length}
+            onDrop={(sessionId) => moveSessionToFolder(sessionId, null)}
+          />
+        )}
         {sessionTree.map((node) => (
           <SessionTreeItem
             key={node.session.id}
@@ -1615,6 +1846,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             runningSessionIds={runningSessionIds}
             unreadSessionIds={unreadSessionIds}
             onSelectSession={handleSelectSessionFromList}
+            onPopOutSession={onPopOutSession}
+            onSessionDragStart={setDraggingSessionId}
+            onSessionDragEnd={() => setDraggingSessionId(null)}
             onRenamed={loadSessions}
             onSessionDeleted={(id) => {
               onSessionDeleted?.(id);
@@ -1625,11 +1859,45 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         ))}
       </div>
 
+      {explorerOpen && (selectedCwdProp || selectedCwd) && (
+        <div
+          role="separator"
+          aria-label={t("sidebar.resizeHistoryExplorer")}
+          aria-orientation="horizontal"
+          aria-valuemin={20}
+          aria-valuemax={80}
+          aria-valuenow={Math.round(historyRatio * 100)}
+          tabIndex={0}
+          onPointerDown={beginSplitResize}
+          onDoubleClick={() => {
+            setHistoryRatio(0.5);
+            saveHistoryRatio(0.5);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowUp") { event.preventDefault(); adjustHistoryRatio(-0.05); }
+            if (event.key === "ArrowDown") { event.preventDefault(); adjustHistoryRatio(0.05); }
+          }}
+          title={t("sidebar.resizeHistoryExplorer")}
+          style={{
+            position: "relative",
+            height: 7,
+            flex: "0 0 7px",
+            cursor: "row-resize",
+            touchAction: "none",
+            background: "transparent",
+            borderTop: "1px solid var(--border)",
+            borderBottom: "1px solid transparent",
+          }}
+          onMouseEnter={(event) => { event.currentTarget.style.borderTopColor = "var(--accent)"; }}
+          onMouseLeave={(event) => { event.currentTarget.style.borderTopColor = "var(--border)"; }}
+        />
+      )}
+
       {/* File Explorer section */}
       {(selectedCwdProp || selectedCwd) && (
         <div
           style={{
-            borderTop: "1px solid var(--border)",
+            borderTop: explorerOpen ? "none" : "1px solid var(--border)",
             display: "flex",
             flexDirection: "column",
             flex: explorerOpen ? "1 1 0" : "0 0 auto",
@@ -1742,6 +2010,290 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           )}
         </div>
       )}
+      </div>
+    </div>
+  );
+}
+
+function ConversationFolderDropTray({
+  folders,
+  onDrop,
+}: {
+  folders: ConversationFolder[];
+  onDrop: (folderId: string | null) => void;
+}) {
+  const { t } = useI18n();
+  const [dragOverFolderId, setDragOverFolderId] = useState<string | null | undefined>(undefined);
+  const targets: Array<{ id: string | null; name: string }> = [
+    ...folders.map((folder) => ({ id: folder.id, name: folder.name })),
+    { id: null, name: t("sidebar.unfiled") },
+  ];
+
+  return (
+    <div
+      style={{
+        position: "sticky", top: 0, zIndex: 20,
+        display: "flex", alignItems: "center", gap: 6,
+        minHeight: 42, padding: "6px 8px",
+        overflowX: "auto", overflowY: "hidden",
+        background: "var(--bg)",
+        borderBottom: "1px solid var(--accent)",
+        boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+      }}
+    >
+      <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10, fontWeight: 600, textTransform: "uppercase" }}>
+        {t("sidebar.moveToFolder")}
+      </span>
+      {targets.map((target) => {
+        const active = dragOverFolderId === target.id;
+        return (
+          <div
+            key={target.id ?? "unfiled"}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              event.dataTransfer.dropEffect = "move";
+              setDragOverFolderId(target.id);
+            }}
+            onDragLeave={() => setDragOverFolderId(undefined)}
+            onDrop={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setDragOverFolderId(undefined);
+              onDrop(target.id);
+            }}
+            title={target.name}
+            style={{
+              display: "flex", alignItems: "center", gap: 5,
+              height: 28, maxWidth: 150, padding: "0 9px", flexShrink: 0,
+              border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+              borderRadius: 6,
+              background: active ? "var(--bg-selected)" : "var(--bg-hover)",
+              color: active ? "var(--accent)" : "var(--text-muted)",
+              fontSize: 11,
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+            </svg>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{target.name}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ConversationFolderHeader({
+  name,
+  count,
+  onDrop,
+}: {
+  name: string;
+  count: number;
+  onDrop: (sessionId: string) => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+  return (
+    <div
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes("text/session-id")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = "move";
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setDragOver(false);
+        const sessionId = event.dataTransfer.getData("text/session-id");
+        if (sessionId) onDrop(sessionId);
+      }}
+      style={{
+        display: "flex", alignItems: "center", gap: 7,
+        height: 34, padding: "0 12px",
+        color: dragOver ? "var(--accent)" : "var(--text-dim)",
+        background: dragOver ? "var(--bg-selected)" : "transparent",
+        borderTop: "1px solid var(--border)",
+        borderBottom: "1px solid var(--border)",
+        fontSize: 10, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase",
+      }}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+      </svg>
+      <span style={{ flex: 1 }}>{name}</span>
+      <span>{count}</span>
+    </div>
+  );
+}
+
+function ConversationFolderSection({
+  folder,
+  nodes,
+  selectedSessionId,
+  runningSessionIds,
+  unreadSessionIds,
+  onSelectSession,
+  onPopOutSession,
+  onRenamed,
+  onSessionDeleted,
+  onMoveSession,
+  onSessionDragStart,
+  onSessionDragEnd,
+  onRenameFolder,
+  onToggleFolder,
+  onDeleteFolder,
+}: {
+  folder: ConversationFolder;
+  nodes: SessionTreeNode[];
+  selectedSessionId: string | null;
+  runningSessionIds: Set<string>;
+  unreadSessionIds: Set<string>;
+  onSelectSession: (session: SessionInfo) => void;
+  onPopOutSession?: (session: SessionInfo, clientX: number, clientY: number) => void;
+  onRenamed: () => void;
+  onSessionDeleted: (id: string) => void;
+  onMoveSession: (sessionId: string, folderId: string | null) => void;
+  onSessionDragStart: (sessionId: string) => void;
+  onSessionDragEnd: () => void;
+  onRenameFolder: (folderId: string, name: string) => void;
+  onToggleFolder: (folderId: string) => void;
+  onDeleteFolder: (folderId: string) => void;
+}) {
+  const { t } = useI18n();
+  const [hovered, setHovered] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(folder.name);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const folderSessions = flattenSessionTree(nodes);
+  const folderActivity = {
+    running: folderSessions.filter((session) => runningSessionIds.has(session.id)).length,
+    unread: folderSessions.filter((session) => unreadSessionIds.has(session.id)).length,
+  };
+
+  const commitRename = useCallback(() => {
+    if (renameValue.trim()) onRenameFolder(folder.id, renameValue);
+    else setRenameValue(folder.name);
+    setRenaming(false);
+  }, [folder.id, folder.name, onRenameFolder, renameValue]);
+
+  const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setDragOver(false);
+    const sessionId = event.dataTransfer.getData("text/session-id");
+    if (sessionId) onMoveSession(sessionId, folder.id);
+  }, [folder.id, onMoveSession]);
+
+  return (
+    <div
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes("text/session-id")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = "move";
+        setDragOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOver(false);
+      }}
+      onDrop={handleDrop}
+      style={{ borderBottom: "1px solid var(--border)" }}
+    >
+      <div
+        onClick={renaming ? undefined : () => onToggleFolder(folder.id)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          display: "flex", alignItems: "center", gap: 7,
+          height: 38, padding: "0 8px 0 10px",
+          cursor: renaming ? "default" : "pointer",
+          color: dragOver ? "var(--accent)" : "var(--text-muted)",
+          background: dragOver ? "var(--bg-selected)" : "var(--bg-hover)",
+          outline: dragOver ? "1px solid var(--accent)" : "none",
+          outlineOffset: -1,
+        }}
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ transform: folder.collapsed ? "none" : "rotate(90deg)", transition: "transform 0.15s", flexShrink: 0 }}>
+          <polyline points="3 2 7 5 3 8" />
+        </svg>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+        </svg>
+        {renaming ? (
+          <input
+            ref={renameInputRef}
+            value={renameValue}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => setRenameValue(event.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commitRename();
+              if (event.key === "Escape") { setRenameValue(folder.name); setRenaming(false); }
+            }}
+            style={{ flex: 1, minWidth: 0, height: 26, padding: "3px 6px", border: "1px solid var(--accent)", borderRadius: 5, outline: "none", background: "var(--bg)", color: "var(--text)", fontSize: 12 }}
+          />
+        ) : (
+          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, fontWeight: 600 }}>{folder.name}</span>
+        )}
+        {!renaming && showProjectActivity(folderActivity, t)}
+        {!renaming && <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{folderSessions.length}</span>}
+        {hovered && !renaming && (
+          <div style={{ display: "flex", gap: 2 }}>
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                setRenameValue(folder.name);
+                setRenaming(true);
+                setTimeout(() => renameInputRef.current?.select(), 0);
+              }}
+              title={t("sidebar.renameFolder")}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 25, height: 25, padding: 0, border: "none", borderRadius: 5, background: "transparent", color: "var(--text-dim)", cursor: "pointer" }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg>
+            </button>
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                if (window.confirm(t("sidebar.deleteFolderConfirm", { name: folder.name }))) onDeleteFolder(folder.id);
+              }}
+              title={t("sidebar.deleteFolder")}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 25, height: 25, padding: 0, border: "none", borderRadius: 5, background: "transparent", color: "var(--text-dim)", cursor: "pointer" }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
+            </button>
+          </div>
+        )}
+      </div>
+      {!folder.collapsed && (
+        <div>
+          {nodes.length === 0 && (
+            <div style={{ padding: "10px 14px", color: dragOver ? "var(--accent)" : "var(--text-dim)", fontSize: 11 }}>
+              {t("sidebar.dropSessionsHere")}
+            </div>
+          )}
+          {nodes.map((node) => (
+            <SessionTreeItem
+              key={node.session.id}
+              node={node}
+              selectedSessionId={selectedSessionId}
+              runningSessionIds={runningSessionIds}
+              unreadSessionIds={unreadSessionIds}
+              onSelectSession={onSelectSession}
+              onPopOutSession={onPopOutSession}
+              onSessionDragStart={onSessionDragStart}
+              onSessionDragEnd={onSessionDragEnd}
+              onRenamed={onRenamed}
+              onSessionDeleted={onSessionDeleted}
+              depth={0}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1752,6 +2304,9 @@ function SessionTreeItem({
   runningSessionIds,
   unreadSessionIds,
   onSelectSession,
+  onPopOutSession,
+  onSessionDragStart,
+  onSessionDragEnd,
   onRenamed,
   onSessionDeleted,
   depth,
@@ -1761,6 +2316,9 @@ function SessionTreeItem({
   runningSessionIds: Set<string>;
   unreadSessionIds: Set<string>;
   onSelectSession: (s: SessionInfo) => void;
+  onPopOutSession?: (session: SessionInfo, clientX: number, clientY: number) => void;
+  onSessionDragStart: (sessionId: string) => void;
+  onSessionDragEnd: () => void;
   onRenamed?: () => void;
   onSessionDeleted?: (id: string) => void;
   depth: number;
@@ -1788,6 +2346,9 @@ function SessionTreeItem({
           isRunning={runningSessionIds.has(node.session.id)}
           isUnread={unreadSessionIds.has(node.session.id)}
           onClick={() => onSelectSession(node.session)}
+          onPopOutSession={onPopOutSession}
+          onSessionDragStart={onSessionDragStart}
+          onSessionDragEnd={onSessionDragEnd}
           onRenamed={onRenamed}
           onDeleted={(id) => onSessionDeleted?.(id)}
           depth={depth}
@@ -1806,6 +2367,9 @@ function SessionTreeItem({
               runningSessionIds={runningSessionIds}
               unreadSessionIds={unreadSessionIds}
               onSelectSession={onSelectSession}
+              onPopOutSession={onPopOutSession}
+              onSessionDragStart={onSessionDragStart}
+              onSessionDragEnd={onSessionDragEnd}
               onRenamed={onRenamed}
               onSessionDeleted={onSessionDeleted}
               depth={depth + 1}
@@ -1930,6 +2494,9 @@ function SessionItem({
   isRunning,
   isUnread,
   onClick,
+  onPopOutSession,
+  onSessionDragStart,
+  onSessionDragEnd,
   onRenamed,
   onDeleted,
   depth = 0,
@@ -1942,6 +2509,9 @@ function SessionItem({
   isRunning?: boolean;
   isUnread?: boolean;
   onClick: () => void;
+  onPopOutSession?: (session: SessionInfo, clientX: number, clientY: number) => void;
+  onSessionDragStart: (sessionId: string) => void;
+  onSessionDragEnd: () => void;
   onRenamed?: () => void;
   onDeleted?: (id: string) => void;
   depth?: number;
@@ -2045,6 +2615,13 @@ function SessionItem({
     e.stopPropagation();
   }, [onRenamed, session.cwd, session.id, session.name, session.path]);
 
+  const handleDragEnd = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    onSessionDragEnd();
+    if (event.clientX > window.innerWidth * 0.72) {
+      onPopOutSession?.(session, event.clientX, event.clientY);
+    }
+  }, [onPopOutSession, onSessionDragEnd, session]);
+
   // Fixed-height outer wrapper — content swaps in place so the list never reflows
   const ITEM_HEIGHT = 54;
 
@@ -2052,6 +2629,13 @@ function SessionItem({
     <div
       onClick={confirmDelete || renaming ? undefined : onClick}
       onContextMenu={confirmDelete || renaming ? undefined : handleContextMenu}
+      draggable={!confirmDelete && !renaming}
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/session-id", session.id);
+        onSessionDragStart(session.id);
+      }}
+      onDragEnd={handleDragEnd}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
       style={{

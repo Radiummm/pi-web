@@ -68,3 +68,37 @@ test("does not expose disk-backed actions for transient sessions", () => {
   assert.match(sessionItemSource, /if \(session\.transient\) return;/);
   assert.match(sessionItemSource, /\{hovered && !session\.transient && \(/);
 });
+
+test("allows transient running sessions to be dragged into conversation folders", () => {
+  assert.match(sessionItemSource, /draggable=\{!confirmDelete && !renaming\}/);
+  assert.doesNotMatch(sessionItemSource, /draggable=\{[^}]*session\.transient/);
+});
+
+test("organizes sessions into persistent drag-and-drop folders", () => {
+  assert.match(source, /loadConversationFolderState\(\)/);
+  assert.match(source, /saveConversationFolderState\(next\)/);
+  assert.match(source, /event\.dataTransfer\.getData\("text\/session-id"\)/);
+  assert.match(source, /<ConversationFolderSection/);
+  assert.match(source, /moveSessionToFolder\(sessionId, null\)/);
+});
+
+test("keeps folder drop targets visible while dragging older sessions", () => {
+  assert.match(source, /draggingSessionId && projectFolders\.length > 0/);
+  assert.match(source, /<ConversationFolderDropTray/);
+  assert.match(source, /position: "sticky", top: 0, zIndex: 20/);
+});
+
+test("aggregates running and unread activity on conversation folders", () => {
+  assert.match(source, /const folderSessions = flattenSessionTree\(nodes\)/);
+  assert.match(source, /running: folderSessions\.filter\(\(session\) => runningSessionIds\.has\(session\.id\)\)\.length/);
+  assert.match(source, /unread: folderSessions\.filter\(\(session\) => unreadSessionIds\.has\(session\.id\)\)\.length/);
+  assert.match(source, /showProjectActivity\(folderActivity, t\)/);
+});
+
+test("resizes conversation history and the file explorer with an accessible separator", () => {
+  assert.match(source, /role="separator"/);
+  assert.match(source, /onPointerDown=\{beginSplitResize\}/);
+  assert.match(source, /saveHistoryRatio\(latestRatio\)/);
+  assert.match(source, /event\.key === "ArrowUp"/);
+  assert.match(source, /event\.key === "ArrowDown"/);
+});

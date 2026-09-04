@@ -50,11 +50,12 @@ function isWindowsDriveRoot(directory: string): boolean {
 interface Props {
   onCancel: () => void;
   onSelect: (path: string) => void;
+  initialDirectory?: string;
   busy?: boolean;
   error?: string | null;
 }
 
-export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Props) {
+export function DirectoryPicker({ onCancel, onSelect, initialDirectory, busy = false, error }: Props) {
   const { t } = useI18n();
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const [currentPath, setCurrentPath] = useState("");
@@ -85,8 +86,8 @@ export function DirectoryPicker({ onCancel, onSelect, busy = false, error }: Pro
 
   useEffect(() => {
     setPortalTarget(document.body);
-    void navigateTo();
-  }, [navigateTo]);
+    void navigateTo(initialDirectory);
+  }, [initialDirectory, navigateTo]);
 
   const handlePathSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

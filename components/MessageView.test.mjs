@@ -82,7 +82,24 @@ test("renders partial assistant content before the provider error", () => {
   });
 
   assert.match(html, /Partial response/);
-  assert.match(html, /Error: Connection closed/);
+  assert.match(html, /response stream ended unexpectedly before completion/);
+  assert.match(html, /Technical detail: Connection closed/);
+});
+
+test("renders a specific localized explanation for a terminated response", () => {
+  const html = renderMessage({
+    role: "assistant",
+    provider: "aliyun",
+    model: "deepseek-v4-pro-0813",
+    content: [{ type: "text", text: "Partial response" }],
+    stopReason: "error",
+    errorMessage: "terminated",
+  });
+
+  assert.match(html, /terminated the response stream before completion/);
+  assert.match(html, /aliyun\/deepseek-v4-pro-0813/);
+  assert.match(html, /partial response received before the interruption was preserved/);
+  assert.match(html, /Technical detail: terminated/);
 });
 
 test("renders a copy button for completed assistant text", () => {

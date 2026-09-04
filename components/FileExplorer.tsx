@@ -12,6 +12,7 @@ import {
 } from "@/lib/file-paths";
 import type { GitFileStatus, GitFileStatusKind, GitStatusResponse } from "@/lib/git-types";
 import { useI18n } from "@/hooks/useI18n";
+import { DirectoryPicker } from "./DirectoryPicker";
 type Translate = ReturnType<typeof useI18n>["t"];
 
 interface FileEntry {
@@ -525,6 +526,10 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   onChangesCountChange,
 }, ref) {
   const { t } = useI18n();
+  const [browseRoot, setBrowseRoot] = useState(cwd);
+  const [directoryPickerOpen, setDirectoryPickerOpen] = useState(false);
+  const [directoryPickerBusy, setDirectoryPickerBusy] = useState(false);
+  const [directoryPickerError, setDirectoryPickerError] = useState<string | null>(null);
   const [roots, setRoots] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -538,10 +543,15 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSummary, setUploadSummary] = useState<UploadSummary | null>(null);
   const [pendingConflict, setPendingConflict] = useState<PendingConflict | null>(null);
-  const prevCwdRef = useRef<string | null>(null);
+  const prevBrowseRootRef = useRef<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const refreshToken = `${refreshKey ?? 0}:${treeRefreshKey}`;
   const uploadBusy = uploadPhase !== "idle";
+  const normalizedBrowseRoot = normalizeFilePathSlashes(browseRoot).replace(/\/$/, "");
+  const normalizedCwd = normalizeFilePathSlashes(cwd).replace(/\/$/, "");
+  const browsingWorkspace = normalizedBrowseRoot === normalizedCwd;
+  const parentBrowseRoot = getFileDirectory(browseRoot);
+  const canBrowseParent = Boolean(parentBrowseRoot) && parentBrowseRoot !== browseRoot;
 
   const gitStatusByPath = useMemo(() => new Map(
     gitFiles.map((status) => [normalizeFilePathSlashes(status.filePath), status]),
@@ -549,7 +559,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 
   const changedDirectoryPaths = useMemo(() => {
     const directories = new Set<string>();
-    const normalizedCwd = normalizeFilePathSlashes(cwd).replace(/\/$/, "");
+    const normalizedCwd = normalizeFilePathSlashes(browseRoot).replace(/\/$/, "");
     for (const status of gitFiles) {
       let directory = getFileDirectory(normalizeFilePathSlashes(status.filePath));
       while (directory === normalizedCwd || directory.startsWith(`${normalizedCwd}/`)) {
@@ -561,7 +571,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
       }
     }
     return directories;
-  }, [cwd, gitFiles]);
+  }, [browseRoot, gitFiles]);
 
   const handleToggleExpanded = useCallback((fullPath: string, open: boolean) => {
     setExpandedPaths((prev) => {
@@ -578,10 +588,10 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setUploadSummary({ uploaded, skipped, errors });
 
     if (uploaded.length > 0) {
-      setHighlightedPaths(new Set(uploaded.map((name) => joinFilePath(cwd, name))));
+      setHighlightedPaths(new Set(uploaded.map((name) => joinFilePath(browseRoot, name))));
       setTreeRefreshKey((key) => key + 1);
     }
-  }, [cwd]);
+  }, [browseRoot]);
 
   const performUpload = useCallback(async (
     files: File[],
@@ -593,7 +603,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setUploadPhase("uploading");
 
     try {
-      const { status, data } = await uploadFiles(cwd, files, strategy, setUploadProgress);
+      const { status, data } = await uploadFiles(browseRoot, files, strategy, setUploadProgress);
       if (status === 409 && data.conflicts?.length) {
         setPendingConflict({
           files,
@@ -612,7 +622,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     } finally {
       setUploadPhase("idle");
     }
-  }, [applyUploadResult, cwd]);
+  }, [applyUploadResult, browseRoot]);
 
   const prepareUpload = useCallback(async (files: File[]) => {
     if (files.length === 0 || uploadBusy) return;
@@ -625,7 +635,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 
     try {
       const res = await fetch(
-        `/api/files/${encodeFilePathForApi(cwd)}?type=upload-check`,
+        `/api/files/${encodeFilePathForApi(browseRoot)}?type=upload-check`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -650,7 +660,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     } finally {
       setUploadPhase("idle");
     }
-  }, [cwd, performUpload, uploadBusy]);
+  }, [browseRoot, performUpload, uploadBusy]);
 
   const handleUploadInput = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -671,11 +681,15 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   useEffect(() => () => onUploadBusyChange?.(false), [onUploadBusyChange]);
 
   useEffect(() => {
-    const cwdChanged = prevCwdRef.current !== cwd;
-    prevCwdRef.current = cwd;
+    setBrowseRoot(cwd);
+  }, [cwd]);
 
-    // Reset expanded state only when cwd changes, not on refreshKey bumps
-    if (cwdChanged) {
+  useEffect(() => {
+    const browseRootChanged = prevBrowseRootRef.current !== browseRoot;
+    prevBrowseRootRef.current = browseRoot;
+
+    // Reset expanded state only when the displayed root changes, not on refreshKey bumps.
+    if (browseRootChanged) {
       setExpandedPaths(new Set());
       setHighlightedPaths(new Set());
       setUploadSummary(null);
@@ -683,19 +697,19 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
       setUploadError(null);
     }
 
-    setLoading(cwdChanged);
+    setLoading(browseRootChanged);
     setError(null);
     let cancelled = false;
-    fetchEntries(cwd)
+    fetchEntries(browseRoot)
       .then((entries) => { if (!cancelled) setRoots(entries); })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [cwd, refreshKey, treeRefreshKey]);
+  }, [browseRoot, refreshKey, treeRefreshKey]);
 
   useEffect(() => {
     let cancelled = false;
-    fetchGitStatus(cwd)
+    fetchGitStatus(browseRoot)
       .then((status) => {
         if (!cancelled) {
           setGitFiles(status.isGitRepository ? status.files : []);
@@ -711,7 +725,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         }
       });
     return () => { cancelled = true; };
-  }, [cwd, refreshKey, treeRefreshKey]);
+  }, [browseRoot, refreshKey, treeRefreshKey]);
 
   useEffect(() => {
     onChangesCountChange?.(gitFiles.length);
@@ -722,13 +736,102 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   const addUploadedFilesToChat = useCallback(() => {
     if (!uploadSummary || uploadSummary.uploaded.length === 0) return;
     onAtMentions?.(
-      uploadSummary.uploaded.map((name) => getRelativeFilePath(joinFilePath(cwd, name), cwd)),
+      uploadSummary.uploaded.map((name) => getRelativeFilePath(joinFilePath(browseRoot, name), cwd)),
     );
-  }, [cwd, onAtMentions, uploadSummary]);
+  }, [browseRoot, cwd, onAtMentions, uploadSummary]);
+
+  const selectBrowseRoot = useCallback(async (directory: string) => {
+    if (directoryPickerBusy) return;
+    setDirectoryPickerBusy(true);
+    setDirectoryPickerError(null);
+    try {
+      const response = await fetch("/api/cwd/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: directory }),
+      });
+      const data = await response.json().catch(() => ({})) as { cwd?: string; error?: string };
+      if (!response.ok || data.error) {
+        setDirectoryPickerError(data.error ?? `HTTP ${response.status}`);
+        return;
+      }
+      setBrowseRoot(data.cwd ?? directory);
+      setDirectoryPickerOpen(false);
+    } catch (selectionError) {
+      setDirectoryPickerError(selectionError instanceof Error ? selectionError.message : String(selectionError));
+    } finally {
+      setDirectoryPickerBusy(false);
+    }
+  }, [directoryPickerBusy]);
 
   return (
     <div style={{ minHeight: "100%" }}>
+      {directoryPickerOpen && (
+        <DirectoryPicker
+          initialDirectory={browseRoot}
+          busy={directoryPickerBusy}
+          error={directoryPickerError}
+          onCancel={() => {
+            setDirectoryPickerOpen(false);
+            setDirectoryPickerError(null);
+          }}
+          onSelect={(directory) => void selectBrowseRoot(directory)}
+        />
+      )}
       <input ref={uploadInputRef} type="file" multiple hidden onChange={handleUploadInput} />
+      <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 8px", borderBottom: "1px solid var(--border)" }}>
+        <FolderIcon size={14} open />
+        <span
+          title={browseRoot}
+          style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 10 }}
+        >
+          {browseRoot}
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            if (canBrowseParent) void selectBrowseRoot(parentBrowseRoot);
+          }}
+          disabled={!canBrowseParent || directoryPickerBusy}
+          title={t("files.goToParentFolder")}
+          aria-label={t("files.goToParentFolder")}
+          style={{ width: 24, height: 24, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: 0, borderRadius: 4, background: "none", color: "var(--text-dim)", cursor: canBrowseParent && !directoryPickerBusy ? "pointer" : "default", opacity: canBrowseParent ? 1 : 0.4 }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
+        {!browsingWorkspace && (
+          <button
+            type="button"
+            onClick={() => setBrowseRoot(cwd)}
+            title={t("files.returnToWorkspace")}
+            aria-label={t("files.returnToWorkspace")}
+            style={{ width: 24, height: 24, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: 0, borderRadius: 4, background: "none", color: "var(--text-dim)", cursor: "pointer" }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m3 11 9-8 9 8" />
+              <path d="M5 10v10h14V10" />
+            </svg>
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setDirectoryPickerError(null);
+            setDirectoryPickerOpen(true);
+          }}
+          title={t("files.browseFolder")}
+          aria-label={t("files.browseFolder")}
+          style={{ width: 24, height: 24, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, border: 0, borderRadius: 4, background: "none", color: "var(--text-dim)", cursor: "pointer" }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 6h6l2 2h10v10H3z" />
+            <path d="M12 13h6" />
+            <path d="M15 10v6" />
+          </svg>
+        </button>
+      </div>
       {showUploadFeedback && (
         <div style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)" }}>
         {uploadBusy && (

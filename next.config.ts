@@ -12,6 +12,10 @@ try {
 } catch { /* package not found, use default */ }
 
 const nextConfig: NextConfig = {
+  experimental: {
+    // Base64 adds roughly 33% to the existing 10 x 10MB attachment allowance.
+    proxyClientMaxBodySize: "140mb",
+  },
   outputFileTracingRoot: configDir,
   serverExternalPackages: [
     "undici",

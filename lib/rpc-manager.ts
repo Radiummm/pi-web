@@ -21,6 +21,7 @@ import type {
   SessionMessageEntry,
 } from "./types";
 import { createHeadlessCustomUiTui, DEFAULT_CUSTOM_UI_COLUMNS, type HeadlessCustomUiTui } from "./custom-ui-terminal";
+import { installInterruptedResponseRecovery } from "./interrupted-response-recovery";
 
 // ============================================================================
 // Types
@@ -1593,7 +1594,10 @@ export async function startRpcSession(
   const locks = getLocks();
 
   const existing = registry.get(sessionId);
-  if (existing?.isAlive()) return { session: existing, realSessionId: sessionId };
+  if (existing?.isAlive()) {
+    installInterruptedResponseRecovery(existing.inner);
+    return { session: existing, realSessionId: sessionId };
+  }
 
   const inflight = locks.get(sessionId);
   if (inflight) return inflight;
@@ -1663,6 +1667,7 @@ export async function startRpcSession(
       ...(initial.scopedModels.length > 0 ? { scopedModels: initial.scopedModels } : {}),
       ...(toolsOption !== undefined ? { tools: toolsOption } : {}),
     });
+    installInterruptedResponseRecovery(inner);
 
     const persistedPreferences = await persistExplicitStartupPreferences(
       services.settingsManager,

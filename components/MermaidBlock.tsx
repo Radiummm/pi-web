@@ -242,6 +242,19 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
+  const syntaxStyle = useMemo(() => {
+    const theme = isDark ? vscDarkPlus : vs;
+    const preSelector = 'pre[class*="language-"]';
+    const preStyle = theme[preSelector];
+    if (!preStyle || !("backgroundColor" in preStyle)) return theme;
+
+    const { backgroundColor, ...rest } = preStyle;
+    return {
+      ...theme,
+      [preSelector]: { ...rest, background: backgroundColor },
+    };
+  }, [isDark]);
+
   const copy = () => {
     copyText(code).then(() => {
       setCopied(true);
@@ -279,7 +292,7 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
       ) : (
         <SyntaxHighlighter
           language={lang || "text"}
-          style={isDark ? vscDarkPlus : vs}
+          style={syntaxStyle}
           showLineNumbers
           lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal" }}
           customStyle={{
