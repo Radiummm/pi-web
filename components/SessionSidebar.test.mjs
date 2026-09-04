@@ -30,6 +30,25 @@ test("exposes the polled running-session set to the shell", () => {
   assert.match(source, /onRunningSessionIdsChange\?\.\(runningSessionIds\)/);
 });
 
+test("exposes the loaded session catalog to the shell", () => {
+  assert.match(source, /onSessionsChange\?: \(sessions: SessionInfo\[\]\) => void/);
+  assert.match(source, /onSessionsChange\?\.\(allSessions\)/);
+});
+
+test("subagent completion stays silent and never becomes unread", () => {
+  assert.match(source, /completionNotificationSuppressedSessionIds\?: string\[\]/);
+  assert.match(
+    source,
+    /completedWithNotifications = completedInBackground\.filter\([\s\S]*?!previousSuppressedCompletionSessionIdsRef\.current\.has\(id\)[\s\S]*?!knownSubagentIds\.has\(id\)/,
+  );
+  assert.match(source, /completedWithNotifications\.forEach\(\(id\) => next\.add\(id\)\)/);
+  assert.match(source, /if \(completedWithNotifications\.length > 0\) \{\s*onBackgroundTaskDone\?\.\(\)/);
+  assert.match(
+    source,
+    /filter\(\(session\) => session\.relation\?\.kind !== "subagent"\)[\s\S]*?unreadEligibleIds\.has\(id\)/,
+  );
+});
+
 test("includes project activity counts in accessible labels", () => {
   assert.match(
     source,
@@ -39,6 +58,12 @@ test("includes project activity counts in accessible labels", () => {
     source,
     /aria-label=\{`\$\{t\("sidebar\.newSessionActivity"\)\} \(\$\{activity\.unread\}\)`\}/,
   );
+});
+
+test("formats session timestamps with the active locale", () => {
+  assert.match(source, /import \{ formatRelativeTime \} from "@\/lib\/i18n\/format"/);
+  assert.match(sessionItemSource, /const \{ locale, t \} = useI18n\(\)/);
+  assert.match(sessionItemSource, /formatRelativeTime\(session\.modified, locale\)/);
 });
 
 test("does not persist an unchanged fallback title ending in whitespace", () => {
@@ -67,4 +92,26 @@ test("manual and lifecycle refreshes bypass the server session-list cache", () =
 test("does not expose disk-backed actions for transient sessions", () => {
   assert.match(sessionItemSource, /if \(session\.transient\) return;/);
   assert.match(sessionItemSource, /\{hovered && !session\.transient && \(/);
+});
+
+test("hides subagent rows and aggregates their state into the main session row", () => {
+  assert.match(source, /const sessionFamilies = listSessionFamilies\(filteredSessions\)/);
+  assert.match(source, /familySessions\.some\(\(session\) => session\.id === selectedSessionId\)/);
+  assert.match(source, /familySessions\.some\(\(session\) => runningSessionIds\.has\(session\.id\)\)/);
+  assert.doesNotMatch(source, /function SessionTreeItem/);
+});
+
+test("organizes conversation families into persistent drag-and-drop folders", () => {
+  assert.match(source, /loadConversationFolderState\(\)/);
+  assert.match(source, /saveConversationFolderState\(next\)/);
+  assert.match(source, /const folderFamilies = new Map/);
+  assert.match(source, /event\.dataTransfer\.setData\("text\/session-id", session\.id\)/);
+  assert.match(source, /<ConversationFolderSection/);
+  assert.match(source, /moveSessionToFolder\(sessionId, null\)/);
+});
+
+test("aggregates subagent activity on conversation folder headers", () => {
+  assert.match(source, /const folderSessions = families\.flatMap/);
+  assert.match(source, /running: folderSessions\.filter\(\(session\) => runningSessionIds\.has\(session\.id\)\)\.length/);
+  assert.match(source, /unread: folderSessions\.filter\(\(session\) => unreadSessionIds\.has\(session\.id\)\)\.length/);
 });

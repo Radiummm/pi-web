@@ -1,7 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const PLAN_TOOLS = new Set(["read", "grep", "find", "ls"]);
-const MUTATING_BUILTINS = new Set(["bash", "edit", "write"]);
+const PLAN_TOOL_NAMES = new Set(["read", "grep", "find", "ls", "questionnaire"]);
 const STATE_TYPE = "pi-web-plan-mode";
 
 interface PlanModeState {
@@ -17,16 +16,12 @@ function isPlanModeState(value: unknown): value is PlanModeState {
       || (Array.isArray(state.previousTools) && state.previousTools.every((tool) => typeof tool === "string")));
 }
 
-export function getPlanToolNames(activeTools: string[], availableTools: string[]): string[] {
-  const available = new Set(availableTools);
-  return [...new Set([
-    ...activeTools.filter((tool) => !MUTATING_BUILTINS.has(tool)),
-    ...PLAN_TOOLS,
-  ])].filter((tool) => available.has(tool));
+export function getPlanToolNames(availableTools: string[]): string[] {
+  return availableTools.filter((tool) => PLAN_TOOL_NAMES.has(tool));
 }
 
 export function isPlanBlockedTool(toolName: string): boolean {
-  return MUTATING_BUILTINS.has(toolName);
+  return !PLAN_TOOL_NAMES.has(toolName);
 }
 
 export function planModeExtension(pi: ExtensionAPI): void {
@@ -39,7 +34,7 @@ export function planModeExtension(pi: ExtensionAPI): void {
 
   const enable = () => {
     previousTools ??= pi.getActiveTools();
-    pi.setActiveTools(getPlanToolNames(previousTools, pi.getAllTools().map((tool) => tool.name)));
+    pi.setActiveTools(getPlanToolNames(pi.getAllTools().map((tool) => tool.name)));
   };
 
   const persist = () => pi.appendEntry<PlanModeState>(STATE_TYPE, { enabled, previousTools });
@@ -57,7 +52,7 @@ export function planModeExtension(pi: ExtensionAPI): void {
       updateStatus(ctx.ui.setStatus);
       persist();
       ctx.ui.notify(enabled
-        ? "Plan mode enabled. Bash and file-writing tools are disabled."
+        ? "Plan mode enabled. Only read-only exploration tools are available."
         : "Plan mode disabled. Previous tools restored.");
     },
   });

@@ -17,14 +17,6 @@ export async function GET(
       let closed = false;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
       let unsubscribe: (() => void) | null = null;
-      const send = (event: TerminalEvent) => {
-        if (closed) return;
-        try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-        } catch {
-          cleanup(false);
-        }
-      };
       const cleanup = (closeController: boolean) => {
         if (closed) return;
         closed = true;
@@ -36,6 +28,14 @@ export async function GET(
         }
       };
       const abort = () => cleanup(true);
+      const send = (event: TerminalEvent) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        } catch {
+          cleanup(false);
+        }
+      };
       closeStream = cleanup;
       const subscription = subscribeTerminal(id, send);
       if (!subscription) {

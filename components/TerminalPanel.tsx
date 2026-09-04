@@ -10,7 +10,6 @@ type ServerEvent = { type: "output"; data: string } | { type: "exit"; exitCode: 
 export function TerminalPanel({ cwd }: { cwd: string }) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
-  const terminalRef = useRef<Terminal | null>(null);
   const terminalIdRef = useRef<string | null>(null);
   const exitedRef = useRef(false);
   const inputBufferRef = useRef("");
@@ -37,7 +36,7 @@ export function TerminalPanel({ cwd }: { cwd: string }) {
 
     const terminal = new Terminal({
       cursorBlink: true,
-      fontFamily: 'var(--font-mono)',
+      fontFamily: "var(--font-mono)",
       fontSize: 13,
       lineHeight: 1.25,
       scrollback: 8000,
@@ -56,7 +55,6 @@ export function TerminalPanel({ cwd }: { cwd: string }) {
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(container);
-    terminalRef.current = terminal;
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
       const key = event.key.toLowerCase();
@@ -125,9 +123,10 @@ export function TerminalPanel({ cwd }: { cwd: string }) {
 
     void start().catch((reason: unknown) => {
       if (disposed) return;
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message);
       setStatus("error");
-      terminal.writeln(`\x1b[31m${reason instanceof Error ? reason.message : String(reason)}\x1b[0m`);
+      terminal.writeln(`\x1b[31m${message}\x1b[0m`);
     });
 
     return () => {
@@ -142,22 +141,21 @@ export function TerminalPanel({ cwd }: { cwd: string }) {
       terminalIdRef.current = null;
       if (id) void fetch(`/api/terminal/${encodeURIComponent(id)}`, { method: "DELETE", keepalive: true });
       terminal.dispose();
-      terminalRef.current = null;
     };
   }, [cwd, post, restartKey]);
 
   return (
-    <section className="terminal-panel" aria-label={t("terminal.title")}>
+    <section className="terminal-panel" aria-label={t("chat.shell")}>
       <header className="terminal-panel-header">
         <div className="terminal-panel-path">
           <span className={`terminal-status-dot is-${status}`} />
           <span>{cwd}</span>
         </div>
-        <button type="button" onClick={() => setRestartKey((value) => value + 1)} title={t("terminal.restart")}>
+        <button type="button" onClick={() => setRestartKey((value) => value + 1)} title={t("i18n.refresh")}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M20 11a8 8 0 1 0-2.34 5.66" /><polyline points="20 4 20 11 13 11" />
           </svg>
-          {t("terminal.restart")}
+          {t("i18n.refresh")}
         </button>
       </header>
       {error && <div className="terminal-panel-error" role="alert">{error}</div>}
