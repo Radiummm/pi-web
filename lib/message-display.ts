@@ -1,4 +1,4 @@
-import type { AssistantContentBlock, AssistantMessage, ThinkingContent, ToolCallContent } from "./types";
+import type { AgentMessage, AssistantContentBlock, AssistantMessage, ThinkingContent, ToolCallContent } from "./types";
 
 interface DisplayOptions {
   isStreaming?: boolean;
@@ -39,6 +39,15 @@ function formatFailurePart(
     (text, [key, value]) => text.replaceAll(`{${key}}`, value),
     DEFAULT_FAILURE_MESSAGES[kind],
   );
+}
+
+export function getThinkingPreview(thinking: string): string {
+  return thinking.trimStart().match(/^[^\r\n]{0,240}/u)?.[0].trimEnd() ?? "";
+}
+
+export function isMessageGroupAnchor(message: { role?: AgentMessage["role"]; customType?: string }): boolean {
+  return message.role === "user"
+    || (message.role === "custom" && message.customType === "compaction");
 }
 
 export function isEmptyThinkingBlock(block: AssistantContentBlock, options: DisplayOptions = {}): block is ThinkingContent {

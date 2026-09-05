@@ -4,9 +4,9 @@ import test from "node:test";
 
 const source = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
 
-test("keeps the terminal mounted while chat is visible", () => {
-  assert.match(source, /const \[terminalMounted, setTerminalMounted\] = useState\(false\)/);
-  assert.match(source, /setTerminalMounted\(true\);[\s\S]*?setMainView/);
-  assert.match(source, /terminalMounted && projectTrustCwd && \([\s\S]*?display: mainView === "terminal" \? "block" : "none"[\s\S]*?<TerminalPanel/);
-  assert.doesNotMatch(source, /mainView === "terminal" && projectTrustCwd && <TerminalPanel/);
+test("keeps every terminal tab mounted while chat remains visible", () => {
+  assert.match(source, /\{terminalTabs\.map\(\(tab\) => \(/);
+  assert.match(source, /hidden=\{tab\.id !== activeFileTabId\}/);
+  assert.match(source, /active=\{rightPanelOpen && tab\.id === activeFileTabId\}/);
+  assert.doesNotMatch(source, /const \[mainView, setMainView\]/);
 });
