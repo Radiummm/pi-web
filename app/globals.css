@@ -207,6 +207,7 @@ body {
   grid-row: -2 / -1;
   min-width: 0;
   min-height: 0;
+  /* Keep one terminal row clear below the prompt so the last input line is not obscured. */
   padding: 10px 8px 22px 12px;
   overflow: hidden;
 }
