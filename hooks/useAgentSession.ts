@@ -1014,6 +1014,54 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [finishPromptWithoutStream]);
 
+  // A prompt can be rejected with "Agent is already processing" when the UI
+  // believed the agent was idle but the server is still streaming (a missed
+  // agent_start, an extension-restarted run, auto-retry, or another tab).
+  // Rejected prompts never reached pi's queue, so re-check the server and,
+  // while it is genuinely busy, resubmit as a follow-up: pi decides atomically
+  // whether to queue against the live run or start a new turn if it settled
+  // in between. The running UI state is adopted so the ongoing run's events
+  // render instead of being dropped by the idle guards.
+  const queueRejectedPrompt = useCallback(async (
+    sid: string,
+    message: string,
+    images?: AttachedImage[],
+  ): Promise<boolean> => {
+    let serverBusy = false;
+    try {
+      const res = await fetch(`/api/agent/${encodeURIComponent(sid)}`);
+      if (res.ok) {
+        const data = await res.json() as { running?: boolean; state?: AgentStateResponse };
+        serverBusy = Boolean(data.running && data.state?.isStreaming);
+        if (data.state?.queuedMessages !== undefined) {
+          setQueuedMessages(normalizeQueuedMessages(data.state.queuedMessages));
+        }
+      }
+    } catch {
+      // Server unreachable: fall through to the regular rejection path.
+    }
+    if (!serverBusy) return false;
+    const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
+    await sendAgentCommand(sid, {
+      type: "prompt",
+      message,
+      streamingBehavior: "followUp",
+      ...(piImages?.length ? { images: piImages } : {}),
+    });
+    // A queued submission resolves without a prompt_done; the live run's
+    // agent_settled (or the reconcile poll) performs the next settlement.
+    rpcPromptPendingRef.current = false;
+    cancelEventStreamGrace();
+    agentRunningRef.current = true;
+    sdkAgentActiveRef.current = true;
+    setAgentRunning(true);
+    setAgentPhase({ kind: "waiting_model" });
+    dispatch({ type: "start" });
+    void ensureEventsConnected(sid).catch(() => {});
+    addNotice({ type: "info", message: "Agent is still working — message queued to run after the current turn" });
+    return true;
+  }, [addNotice, cancelEventStreamGrace, ensureEventsConnected]);
+
   // Recovery net for missed SSE events: while the agent is running, verify
   // against the server periodically and whenever the tab returns to the
   // foreground or the network comes back.
@@ -1367,6 +1415,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         void waitForPromptSettlement(sentSessionId, promptRunId);
         return;
       }
+      // The UI thought the agent was idle while the server kept streaming:
+      // queue the message instead of dead-ending on "already processing".
+      if (sentSessionId && isPromptRejectedError(e)) {
+        const queued = await queueRejectedPrompt(sentSessionId, message, images).catch(() => false);
+        if (queued) return;
+      }
       rpcPromptPendingRef.current = false;
       setMessages((prev) => {
         const optimisticIndex = prev.lastIndexOf(userMsg);
@@ -1390,7 +1444,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setAgentPhase(null);
       dispatch({ type: "end" });
     }
-  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, composerDraftKey, reconcileAgentState, restoreSubmission]);
+  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, composerDraftKey, reconcileAgentState, restoreSubmission, queueRejectedPrompt]);
 
   const executeBash = useCallback(async (command: string, excludeFromContext: boolean) => {
     if (agentRunningRef.current || bashRunningRef.current) return;
@@ -1431,12 +1485,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
       return;
     }
+    const runId = promptRunIdRef.current;
     try {
       await sendAgentCommand(sid, { type: "abort" });
+      // AgentSession.abort() resolves only after the agent is idle. Settle the
+      // local UI immediately in case the terminal SSE events were missed.
+      await finishPromptWithoutStream(sid, runId);
     } catch (e) {
       console.error("Failed to abort:", e);
     }
-  }, []);
+  }, [finishPromptWithoutStream]);
 
   const handleFork = useCallback(async (entryId: string) => {
     if (bashRunningRef.current) return;

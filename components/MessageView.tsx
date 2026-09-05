@@ -602,7 +602,7 @@ function AssistantMessageView({
     .map((block, originalIndex) => ({ block, originalIndex }))
     .filter(({ block }) => !isEmptyThinkingBlock(block, { isStreaming })), [message.content, isStreaming]);
   const blocks = useMemo(() => blockItems.map(({ block }) => block), [blockItems]);
-  const providerError = getAssistantErrorMessage(message, { isStreaming });
+  const providerError = getAssistantErrorMessage(message, { isStreaming, translate: t });
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
   const streamStartRef = useRef<number | null>(null);

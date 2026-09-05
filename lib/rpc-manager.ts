@@ -47,6 +47,7 @@ import {
   readSessionToolSelection,
   validateSessionToolSelection,
 } from "./session-tool-selection";
+import { installInterruptedResponseRecovery } from "./interrupted-response-recovery";
 
 // ============================================================================
 // Types
@@ -1894,7 +1895,10 @@ export async function startRpcSession(
   const locks = getLocks();
 
   const existing = registry.get(sessionId);
-  if (existing?.isAlive()) return { session: existing, realSessionId: sessionId };
+  if (existing?.isAlive()) {
+    installInterruptedResponseRecovery(existing.inner);
+    return { session: existing, realSessionId: sessionId };
+  }
 
   const inflight = locks.get(sessionId);
   if (inflight) return inflight;
@@ -2024,6 +2028,7 @@ export async function startRpcSession(
       ...(toolsOption !== undefined ? { tools: toolsOption } : {}),
       ...(subagentResources ? { excludeTools: [...SUBAGENT_CONTROL_TOOL_NAMES] } : {}),
     });
+    installInterruptedResponseRecovery(inner);
 
     const persistedPreferences = await persistExplicitStartupPreferences(
       services.settingsManager,

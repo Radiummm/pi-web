@@ -253,6 +253,20 @@ test("post-accept prompt errors do not duplicate the user submission", () => {
   assert.doesNotMatch(promptErrorSource, /restoreSubmission/);
 });
 
+test("settles the UI as soon as an agent abort completes", () => {
+  const abortSource = source.slice(
+    source.indexOf("  const handleAbort = useCallback"),
+    source.indexOf("  const handleFork = useCallback"),
+  );
+
+  assert.match(abortSource, /const runId = promptRunIdRef\.current/);
+  assert.match(
+    abortSource,
+    /await sendAgentCommand\(sid, \{ type: "abort" \}\);\s*\/\/[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*await finishPromptWithoutStream\(sid, runId\)/,
+  );
+  assert.match(abortSource, /\}, \[finishPromptWithoutStream\]\)/);
+});
+
 test("delegates event stream readiness and hides an empty agent phase", () => {
   const ensureSource = source.slice(
     source.indexOf("const ensureEventsConnected"),
