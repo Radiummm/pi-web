@@ -101,11 +101,17 @@ test("hides subagent rows and aggregates their state into the main session row",
   assert.doesNotMatch(source, /function SessionTreeItem/);
 });
 
+test("allows transient running sessions to be dragged into conversation folders", () => {
+  assert.match(sessionItemSource, /draggable=\{Boolean\(onSessionDragStart\) && !confirmDelete && !renaming\}/);
+  assert.doesNotMatch(sessionItemSource, /draggable=\{[^}]*session\.transient/);
+});
+
 test("organizes conversation families into persistent drag-and-drop folders", () => {
   assert.match(source, /loadConversationFolderState\(\)/);
   assert.match(source, /saveConversationFolderState\(next\)/);
   assert.match(source, /const folderFamilies = new Map/);
   assert.match(source, /event\.dataTransfer\.setData\("text\/session-id", session\.id\)/);
+  assert.match(source, /event\.dataTransfer\.getData\("text\/session-id"\)/);
   assert.match(source, /<ConversationFolderSection/);
   assert.match(source, /moveSessionToFolder\(sessionId, null\)/);
 });
@@ -114,4 +120,13 @@ test("aggregates subagent activity on conversation folder headers", () => {
   assert.match(source, /const folderSessions = families\.flatMap/);
   assert.match(source, /running: folderSessions\.filter\(\(session\) => runningSessionIds\.has\(session\.id\)\)\.length/);
   assert.match(source, /unread: folderSessions\.filter\(\(session\) => unreadSessionIds\.has\(session\.id\)\)\.length/);
+  assert.match(source, /showProjectActivity\(activity, t\)/);
+});
+
+test("resizes conversation history and the file explorer with an accessible separator", () => {
+  assert.match(source, /role="separator"/);
+  assert.match(source, /onPointerDown=\{beginSplitResize\}/);
+  assert.match(source, /saveHistoryRatio\(latestRatio\)/);
+  assert.match(source, /event\.key === "ArrowUp"/);
+  assert.match(source, /event\.key === "ArrowDown"/);
 });

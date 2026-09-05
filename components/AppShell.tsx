@@ -61,6 +61,17 @@ import { getLastSettingsSection, type SettingsSection } from "@/lib/settings-nav
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
 type QuoteChatState = { id: string; cwd: string; prompt: string; quoteText: string; sessionId: string };
+type FloatingSessionResizeEdge = "top" | "right" | "bottom" | "left";
+type FloatingSessionResizeDrag = {
+  edge: FloatingSessionResizeEdge;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 type AutoNameStatus =
   | { kind: "idle" }
   | { kind: "naming" }
@@ -219,9 +230,17 @@ export function AppShell() {
   const [planModeToggling, setPlanModeToggling] = useState(false);
   const quoteChatInputRef = useRef<ChatInputHandle | null>(null);
   const [quoteChat, setQuoteChat] = useState<QuoteChatState | null>(null);
+  const [quoteChatCollapsed, setQuoteChatCollapsed] = useState(false);
+  const [floatingSession, setFloatingSession] = useState<SessionInfo | null>(null);
+  const [floatingSessionPosition, setFloatingSessionPosition] = useState({ x: 0, y: 0 });
+  const [floatingSessionSize, setFloatingSessionSize] = useState({ width: 520, height: 680 });
+  const [floatingSessionCollapsed, setFloatingSessionCollapsed] = useState(false);
   const [quoteChatPosition, setQuoteChatPosition] = useState({ x: 0, y: 0 });
   const quoteChatDragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
   const quoteChatPanelRef = useRef<HTMLDivElement | null>(null);
+  const floatingSessionPanelRef = useRef<HTMLDivElement | null>(null);
+  const floatingSessionDragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
+  const floatingSessionResizeRef = useRef<FloatingSessionResizeDrag | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
   const mobileToolbarRef = useRef<HTMLDivElement>(null);
   const languageBtnRef = useRef<HTMLButtonElement>(null);
@@ -896,6 +915,7 @@ export function AppShell() {
         x: Math.max(8, window.innerWidth - (isMobile ? Math.min(window.innerWidth - 16, 420) : 540)),
         y: Math.max(48, window.innerHeight - (isMobile ? Math.min(window.innerHeight - 72, 620) : 700)),
       });
+      setQuoteChatCollapsed(false);
       setQuoteChat({ id, cwd, prompt, quoteText, sessionId: result.newSessionId });
     } catch (error) {
       console.error("[pi-web] failed to fork quoted chat:", error instanceof Error ? error.message : error);
@@ -930,6 +950,102 @@ export function AppShell() {
       setQuoteChatPosition({ x: rect.left, y: rect.top });
     }
     quoteChatDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
+
+  const handlePopOutSession = useCallback((session: SessionInfo, clientX: number, clientY: number) => {
+    const width = Math.min(520, window.innerWidth - 16);
+    const height = Math.min(680, window.innerHeight - 80);
+    setFloatingSession(session);
+    setFloatingSessionCollapsed(false);
+    setFloatingSessionSize({ width, height });
+    setFloatingSessionPosition({
+      x: Math.max(8, Math.min(window.innerWidth - width - 8, clientX - width / 2)),
+      y: Math.max(48, Math.min(window.innerHeight - height - 8, clientY - 24)),
+    });
+  }, []);
+
+  const handleFloatingSessionPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest("button")) return;
+    const rect = event.currentTarget.parentElement?.getBoundingClientRect();
+    if (!rect) return;
+    floatingSessionDragRef.current = { startX: event.clientX, startY: event.clientY, baseX: rect.left, baseY: rect.top };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }, []);
+
+  const handleFloatingSessionPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = floatingSessionDragRef.current;
+    if (!drag) return;
+    const panel = floatingSessionPanelRef.current;
+    const panelWidth = panel?.offsetWidth ?? 520;
+    const panelHeight = panel?.offsetHeight ?? 680;
+    const x = Math.max(8, Math.min(window.innerWidth - panelWidth - 8, drag.baseX + event.clientX - drag.startX));
+    const y = Math.max(8, Math.min(window.innerHeight - panelHeight - 8, drag.baseY + event.clientY - drag.startY));
+    if (panel) panel.style.transform = `translate3d(${x - drag.baseX}px, ${y - drag.baseY}px, 0)`;
+  }, []);
+
+  const handleFloatingSessionPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const panel = floatingSessionPanelRef.current;
+    if (panel && floatingSessionDragRef.current) {
+      const rect = panel.getBoundingClientRect();
+      panel.style.transform = "";
+      setFloatingSessionPosition({ x: rect.left, y: rect.top });
+    }
+    floatingSessionDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
+
+  const handleFloatingSessionResizePointerDown = useCallback((
+    edge: FloatingSessionResizeEdge,
+    event: React.PointerEvent<HTMLDivElement>,
+  ) => {
+    if (event.button !== 0) return;
+    const rect = floatingSessionPanelRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    floatingSessionResizeRef.current = {
+      edge,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  }, []);
+
+  const handleFloatingSessionResizePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = floatingSessionResizeRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    const minWidth = Math.min(320, window.innerWidth - 16);
+    const minHeight = Math.min(360, window.innerHeight - 16);
+    let { x, y, width, height } = drag;
+
+    if (drag.edge === "left") {
+      x = Math.max(8, Math.min(drag.x + drag.width - minWidth, drag.x + dx));
+      width = drag.width + drag.x - x;
+    } else if (drag.edge === "right") {
+      width = Math.max(minWidth, Math.min(window.innerWidth - drag.x - 8, drag.width + dx));
+    } else if (drag.edge === "top") {
+      y = Math.max(8, Math.min(drag.y + drag.height - minHeight, drag.y + dy));
+      height = drag.height + drag.y - y;
+    } else {
+      height = Math.max(minHeight, Math.min(window.innerHeight - drag.y - 8, drag.height + dy));
+    }
+
+    setFloatingSessionPosition({ x, y });
+    setFloatingSessionSize({ width, height });
+  }, []);
+
+  const handleFloatingSessionResizePointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (floatingSessionResizeRef.current?.pointerId !== event.pointerId) return;
+    floatingSessionResizeRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }, []);
 
@@ -1091,6 +1207,7 @@ export function AppShell() {
       <SessionSidebar
         selectedSessionId={selectedSession?.id ?? null}
         onSelectSession={handleSelectSession}
+        onPopOutSession={handlePopOutSession}
         onNewSession={handleNewSession}
         initialSessionId={initialSessionId}
         skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
@@ -2484,8 +2601,8 @@ export function AppShell() {
               left: quoteChatPosition.x,
               top: quoteChatPosition.y,
               width: isMobile ? "calc(100vw - 16px)" : "min(520px, calc(100vw - 16px))",
-              height: isMobile ? "min(620px, calc(100vh - 72px))" : "min(680px, calc(100vh - 80px))",
-              minHeight: 360,
+              height: quoteChatCollapsed ? 42 : (isMobile ? "min(620px, calc(100vh - 72px))" : "min(680px, calc(100vh - 80px))"),
+              minHeight: quoteChatCollapsed ? 0 : 360,
               display: "flex",
               flexDirection: "column",
               overflow: "hidden",
@@ -2508,6 +2625,18 @@ export function AppShell() {
               <span style={{ flex: 1, minWidth: 0, color: "var(--text)", fontSize: 13, fontWeight: 650 }}>{translate("chat.newQuoteChat")}</span>
               <button
                 type="button"
+                aria-expanded={!quoteChatCollapsed}
+                onClick={() => setQuoteChatCollapsed((collapsed) => !collapsed)}
+                title={translate(quoteChatCollapsed ? "chat.expandQuoteChat" : "chat.collapseQuoteChat")}
+                aria-label={translate(quoteChatCollapsed ? "chat.expandQuoteChat" : "chat.collapseQuoteChat")}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, padding: 0, border: "none", borderRadius: 5, background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  {quoteChatCollapsed ? <path d="m6 9 6 6 6-6" /> : <path d="m6 15 6-6 6 6" />}
+                </svg>
+              </button>
+              <button
+                type="button"
                 onClick={() => setQuoteChat(null)}
                 title={translate("i18n.close")}
                 aria-label={translate("i18n.close")}
@@ -2518,6 +2647,7 @@ export function AppShell() {
                 </svg>
               </button>
             </div>
+            {!quoteChatCollapsed && <>
             <div style={{ padding: "9px 12px", borderBottom: "1px solid color-mix(in srgb, var(--border) 62%, transparent)", background: "color-mix(in srgb, var(--accent) 6%, transparent)", color: "var(--text-muted)", fontSize: 12, lineHeight: 1.5 }}>
               <div style={{ marginBottom: 4, color: "var(--accent)", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" }}>{translate("chat.quotedFromCurrent")}</div>
               <div style={{ maxHeight: 88, overflowY: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere", borderLeft: "2px solid color-mix(in srgb, var(--accent) 55%, transparent)", paddingLeft: 8 }}>{quoteChat.quoteText}</div>
@@ -2538,6 +2668,105 @@ export function AppShell() {
                 unlockAudio={unlockAudio}
               />
             </div>
+            </>}
+          </div>
+        </div>
+      )}
+
+      {floatingSession && (
+        <div
+          role="dialog"
+          aria-label={floatingSession.name || floatingSession.firstMessage.slice(0, 60) || floatingSession.id.slice(0, 12)}
+          style={{ position: "fixed", inset: 0, zIndex: 115, pointerEvents: "none" }}
+        >
+          <div
+            ref={floatingSessionPanelRef}
+            style={{
+              position: "fixed",
+              left: floatingSessionPosition.x,
+              top: floatingSessionPosition.y,
+              width: isMobile ? "calc(100vw - 16px)" : floatingSessionSize.width,
+              height: floatingSessionCollapsed ? 42 : (isMobile ? "min(620px, calc(100vh - 72px))" : floatingSessionSize.height),
+              minHeight: floatingSessionCollapsed ? 0 : 360,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              border: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
+              borderRadius: 10,
+              background: "color-mix(in srgb, var(--bg) 78%, transparent)",
+              backdropFilter: "blur(18px) saturate(1.15)",
+              WebkitBackdropFilter: "blur(18px) saturate(1.15)",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.32), 0 0 0 1px rgba(255,255,255,0.08) inset",
+              pointerEvents: "auto",
+            }}
+          >
+            {!isMobile && !floatingSessionCollapsed && ([
+              ["top", { top: -4, left: 8, right: 8, height: 8, cursor: "ns-resize" }],
+              ["right", { top: 8, right: -4, bottom: 8, width: 8, cursor: "ew-resize" }],
+              ["bottom", { right: 8, bottom: -4, left: 8, height: 8, cursor: "ns-resize" }],
+              ["left", { top: 8, bottom: 8, left: -4, width: 8, cursor: "ew-resize" }],
+            ] as const).map(([edge, style]) => (
+              <div
+                key={edge}
+                data-floating-resize-edge={edge}
+                onPointerDown={(event) => handleFloatingSessionResizePointerDown(edge, event)}
+                onPointerMove={handleFloatingSessionResizePointerMove}
+                onPointerUp={handleFloatingSessionResizePointerUp}
+                onPointerCancel={handleFloatingSessionResizePointerUp}
+                style={{ position: "absolute", zIndex: 2, touchAction: "none", ...style }}
+              />
+            ))}
+            <div
+              onPointerDown={handleFloatingSessionPointerDown}
+              onPointerMove={handleFloatingSessionPointerMove}
+              onPointerUp={handleFloatingSessionPointerUp}
+              onPointerCancel={handleFloatingSessionPointerUp}
+              style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 42, padding: "0 12px", borderBottom: "1px solid color-mix(in srgb, var(--border) 68%, transparent)", background: "color-mix(in srgb, var(--bg-panel) 72%, transparent)", backdropFilter: "blur(22px) saturate(1.2)", WebkitBackdropFilter: "blur(22px) saturate(1.2)", cursor: "grab", userSelect: "none" }}
+            >
+              <span style={{ flex: 1, minWidth: 0, color: "var(--text)", fontSize: 13, fontWeight: 650, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {floatingSession.name || floatingSession.firstMessage.slice(0, 60) || floatingSession.id.slice(0, 12)}
+              </span>
+              <button
+                type="button"
+                aria-expanded={!floatingSessionCollapsed}
+                onClick={() => setFloatingSessionCollapsed((collapsed) => !collapsed)}
+                title={translate(floatingSessionCollapsed ? "chat.expandQuoteChat" : "chat.collapseQuoteChat")}
+                aria-label={translate(floatingSessionCollapsed ? "chat.expandQuoteChat" : "chat.collapseQuoteChat")}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, padding: 0, border: "none", borderRadius: 5, background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  {floatingSessionCollapsed ? <path d="m6 9 6 6 6-6" /> : <path d="m6 15 6-6 6 6" />}
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => setFloatingSession(null)}
+                title={translate("i18n.close")}
+                aria-label={translate("i18n.close")}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, padding: 0, border: "none", borderRadius: 5, background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                  <path d="M6 6 18 18M18 6 6 18" />
+                </svg>
+              </button>
+            </div>
+            {!floatingSessionCollapsed && (
+              <div style={{ flex: 1, minHeight: 0 }}>
+                <ChatWindow
+                  key={`floating-${floatingSession.id}`}
+                  session={floatingSession}
+                  sessionRunning={runningSessionIds.has(floatingSession.id)}
+                  newSessionCwd={null}
+                  newSessionDraftKey={null}
+                  onOpenFile={handleOpenLinkedFile}
+                  onAskInNewChat={handleAskInNewChat}
+                  soundEnabled={soundEnabled}
+                  onSoundToggle={onSoundToggle}
+                  playDoneSound={playDoneSound}
+                  unlockAudio={unlockAudio}
+                />
+              </div>
+            )}
           </div>
         </div>
       )}

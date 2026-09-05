@@ -14,6 +14,11 @@ import {
   type ConversationFolderState,
 } from "@/lib/conversation-folder-state";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
+import {
+  clampHistoryRatio,
+  loadHistoryRatio,
+  saveHistoryRatio,
+} from "@/lib/sidebar-layout-state";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getProjectActivity, getRecentProjects, sessionsForProject } from "@/lib/project-groups";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
@@ -92,6 +97,7 @@ function ToolbarIconButton({
 interface Props {
   selectedSessionId: string | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean) => void;
+  onPopOutSession?: (session: SessionInfo, clientX: number, clientY: number) => void;
   onNewSession?: (sessionId: string, cwd: string) => void;
   initialSessionId?: string | null;
   skipInitialProjectSelection?: boolean;
@@ -360,7 +366,7 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onPopOutSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -388,6 +394,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const wtDropdownRef = useRef<HTMLDivElement>(null);
   const wtNewInputRef = useRef<HTMLInputElement>(null);
   const [explorerOpen, setExplorerOpen] = useState(true);
+  const [historyRatio, setHistoryRatio] = useState(0.5);
   const [folderState, setFolderState] = useState<ConversationFolderState>(() => emptyConversationFolderState());
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
@@ -410,6 +417,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
+  const splitPaneRef = useRef<HTMLDivElement>(null);
   const newFolderInputRef = useRef<HTMLInputElement>(null);
 
   const loadSessions = useCallback(async (showLoading = false, force = false) => {
@@ -469,6 +477,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // preference after hydration so a collapsed explorer stays collapsed on reload.
   useEffect(() => {
     setExplorerOpen(loadExplorerOpen());
+    setHistoryRatio(loadHistoryRatio());
     setFolderState(loadConversationFolderState());
   }, []);
 
@@ -964,6 +973,42 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     updateFolderState((current) => deleteConversationFolder(current, folderId));
   }, [updateFolderState]);
 
+  const beginSplitResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const pane = splitPaneRef.current;
+    if (!pane) return;
+    event.preventDefault();
+    const rect = pane.getBoundingClientRect();
+    let latestRatio = historyRatio;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (moveEvent: PointerEvent) => {
+      latestRatio = clampHistoryRatio((moveEvent.clientY - rect.top) / rect.height);
+      setHistoryRatio(latestRatio);
+    };
+    const onEnd = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onEnd);
+      window.removeEventListener("pointercancel", onEnd);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      saveHistoryRatio(latestRatio);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onEnd, { once: true });
+    window.addEventListener("pointercancel", onEnd, { once: true });
+  }, [historyRatio]);
+
+  const adjustHistoryRatio = useCallback((delta: number) => {
+    setHistoryRatio((current) => {
+      const next = clampHistoryRatio(current + delta);
+      saveHistoryRatio(next);
+      return next;
+    });
+  }, []);
+
   // Per-project activity counts (running / unread) for the workspace selector.
   // Uses the same stable server key as the project list and filtering.
   const projectActivity = useMemo(
@@ -1045,6 +1090,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         isRunning={familySessions.some((session) => runningSessionIds.has(session.id))}
         isUnread={familySessions.some((session) => unreadSessionIds.has(session.id))}
         onClick={() => handleSelectSessionFromList(family.root)}
+        onPopOutSession={onPopOutSession}
         onSessionDragStart={setDraggingSessionId}
         onSessionDragEnd={() => setDraggingSessionId(null)}
         onRenamed={loadSessions}
@@ -1746,8 +1792,16 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         )}
       </div>
 
+      <div ref={splitPaneRef} style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
       {/* Session list */}
-      <div style={{ flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
+      <div
+        style={{
+          flex: explorerOpen && (selectedCwdProp || selectedCwd) ? `0 0 ${historyRatio * 100}%` : "1 1 auto",
+          overflowY: "auto",
+          padding: "0",
+          minHeight: 80,
+        }}
+      >
         {creatingFolder && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid var(--border)" }}>
             <input
@@ -1804,11 +1858,45 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         {unfiledFamilies.map(renderSessionFamily)}
       </div>
 
+      {explorerOpen && (selectedCwdProp || selectedCwd) && (
+        <div
+          role="separator"
+          aria-label={t("sidebar.resizeHistoryExplorer")}
+          aria-orientation="horizontal"
+          aria-valuemin={20}
+          aria-valuemax={80}
+          aria-valuenow={Math.round(historyRatio * 100)}
+          tabIndex={0}
+          onPointerDown={beginSplitResize}
+          onDoubleClick={() => {
+            setHistoryRatio(0.5);
+            saveHistoryRatio(0.5);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowUp") { event.preventDefault(); adjustHistoryRatio(-0.05); }
+            if (event.key === "ArrowDown") { event.preventDefault(); adjustHistoryRatio(0.05); }
+          }}
+          title={t("sidebar.resizeHistoryExplorer")}
+          style={{
+            position: "relative",
+            height: 7,
+            flex: "0 0 7px",
+            cursor: "row-resize",
+            touchAction: "none",
+            background: "transparent",
+            borderTop: "1px solid var(--border)",
+            borderBottom: "1px solid transparent",
+          }}
+          onMouseEnter={(event) => { event.currentTarget.style.borderTopColor = "var(--accent)"; }}
+          onMouseLeave={(event) => { event.currentTarget.style.borderTopColor = "var(--border)"; }}
+        />
+      )}
+
       {/* File Explorer section */}
       {(selectedCwdProp || selectedCwd) && (
         <div
           style={{
-            borderTop: "1px solid var(--border)",
+            borderTop: explorerOpen ? "none" : "1px solid var(--border)",
             display: "flex",
             flexDirection: "column",
             flex: explorerOpen ? "1 1 0" : "0 0 auto",
@@ -1938,6 +2026,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -2242,6 +2331,7 @@ function SessionItem({
   isRunning,
   isUnread,
   onClick,
+  onPopOutSession,
   onSessionDragStart,
   onSessionDragEnd,
   onRenamed,
@@ -2256,6 +2346,7 @@ function SessionItem({
   isRunning?: boolean;
   isUnread?: boolean;
   onClick: () => void;
+  onPopOutSession?: (session: SessionInfo, clientX: number, clientY: number) => void;
   onSessionDragStart?: (sessionId: string) => void;
   onSessionDragEnd?: () => void;
   onRenamed?: () => void;
@@ -2361,6 +2452,13 @@ function SessionItem({
     e.stopPropagation();
   }, [onRenamed, session.cwd, session.id, session.name, session.path]);
 
+  const handleDragEnd = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    onSessionDragEnd?.();
+    if (event.clientX > window.innerWidth * 0.72) {
+      onPopOutSession?.(session, event.clientX, event.clientY);
+    }
+  }, [onPopOutSession, onSessionDragEnd, session]);
+
   // Fixed-height outer wrapper — content swaps in place so the list never reflows
   const ITEM_HEIGHT = 54;
 
@@ -2374,7 +2472,7 @@ function SessionItem({
         event.dataTransfer.setData("text/session-id", session.id);
         onSessionDragStart?.(session.id);
       }}
-      onDragEnd={() => onSessionDragEnd?.()}
+      onDragEnd={handleDragEnd}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
       style={{
